@@ -1,0 +1,112 @@
+{
+  "configById": {
+    "3D!main": {
+      "cameraState": {
+        "distance": 4,
+        "perspective": true,
+        "phi": 60,
+        "target": [0, 0, 0.8],
+        "targetOffset": [0, 0, 0],
+        "targetOrientation": [0, 0, 0, 1],
+        "thetaOffset": -45,
+        "fovy": 45,
+        "near": 0.001,
+        "far": 5000
+      },
+      "followTf": null,
+      "followMode": "follow-none",
+      "scene": {"labelScaleFactor": 1},
+      "transforms": {},
+      "topics": {
+        "/vicon/tello1/pose": {"visible": true, "color": "#ff6b6b"},
+        "/tello1/kf_pose":   {"visible": true, "color": "#51cf66"},
+        "/tello1/kf_path":   {"visible": true, "color": "#51cf66", "lineWidth": 2}
+      },
+      "layers": {}
+    },
+
+    "Plot!position": {
+      "title": "KF Tuning — Position: raw Vicon vs KF estimate (m)",
+      "paths": [
+        {"value": "/vicon/tello1/pose.pose.position.x", "enabled": true, "timestampMethod": "receiveTime", "label": "x Vicon (m)",      "showLine": false},
+        {"value": "/vicon/tello1/pose.pose.position.y", "enabled": true, "timestampMethod": "receiveTime", "label": "y Vicon (m)",      "showLine": false},
+        {"value": "/vicon/tello1/pose.pose.position.z", "enabled": true, "timestampMethod": "receiveTime", "label": "z Vicon (m)",      "showLine": false},
+        {"value": "/tello1/kf_state.data[0]",           "enabled": true, "timestampMethod": "receiveTime", "label": "x KF (m)",        "showLine": true},
+        {"value": "/tello1/kf_state.data[2]",           "enabled": true, "timestampMethod": "receiveTime", "label": "y KF (m)",        "showLine": true},
+        {"value": "/tello1/kf_state.data[4]",           "enabled": true, "timestampMethod": "receiveTime", "label": "z KF (m)",        "showLine": true}
+      ],
+      "showLegend": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "minYValue": "",
+      "maxYValue": ""
+    },
+
+    "Plot!euler": {
+      "title": "KF Tuning — Orientation: raw Vicon vs KF estimate (rad)",
+      "paths": [
+        {"value": "/vicon/tello1/pose.pose.orientation.x", "enabled": false, "timestampMethod": "receiveTime", "label": "qx Vicon",            "showLine": false},
+        {"value": "/tello1/kf_state.data[6]",              "enabled": true,  "timestampMethod": "receiveTime", "label": "roll KF (rad)",       "showLine": true},
+        {"value": "/tello1/kf_state.data[8]",              "enabled": true,  "timestampMethod": "receiveTime", "label": "pitch KF (rad)",      "showLine": true},
+        {"value": "/tello1/kf_state.data[10]",             "enabled": true,  "timestampMethod": "receiveTime", "label": "yaw KF (rad)",        "showLine": true}
+      ],
+      "showLegend": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "minYValue": "",
+      "maxYValue": ""
+    },
+
+    "Plot!velocity": {
+      "title": "KF Tuning — Linear velocity estimate: vx, vy, vz (m/s)  ← KEY: should be ~0 when stationary",
+      "paths": [
+        {"value": "/tello1/kf_state.data[1]", "enabled": true, "timestampMethod": "receiveTime", "label": "vx KF (m/s)", "showLine": true},
+        {"value": "/tello1/kf_state.data[3]", "enabled": true, "timestampMethod": "receiveTime", "label": "vy KF (m/s)", "showLine": true},
+        {"value": "/tello1/kf_state.data[5]", "enabled": true, "timestampMethod": "receiveTime", "label": "vz KF (m/s)", "showLine": true}
+      ],
+      "showLegend": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "minYValue": "",
+      "maxYValue": ""
+    },
+
+    "Plot!angular_vel": {
+      "title": "KF Tuning — Angular velocity estimate: vroll, vpitch, vyaw (rad/s)",
+      "paths": [
+        {"value": "/tello1/kf_state.data[7]",  "enabled": true, "timestampMethod": "receiveTime", "label": "vroll KF (rad/s)",  "showLine": true},
+        {"value": "/tello1/kf_state.data[9]",  "enabled": true, "timestampMethod": "receiveTime", "label": "vpitch KF (rad/s)", "showLine": true},
+        {"value": "/tello1/kf_state.data[11]", "enabled": true, "timestampMethod": "receiveTime", "label": "vyaw KF (rad/s)",   "showLine": true}
+      ],
+      "showLegend": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "minYValue": "",
+      "maxYValue": ""
+    }
+  },
+
+  "globalVariables": {},
+
+  "layout": {
+    "first": "3D!main",
+    "second": {
+      "first": {
+        "first": "Plot!position",
+        "second": "Plot!euler",
+        "direction": "column",
+        "splitPercentage": 50
+      },
+      "second": {
+        "first": "Plot!velocity",
+        "second": "Plot!angular_vel",
+        "direction": "column",
+        "splitPercentage": 50
+      },
+      "direction": "row",
+      "splitPercentage": 50
+    },
+    "direction": "row",
+    "splitPercentage": 28
+  }
+}

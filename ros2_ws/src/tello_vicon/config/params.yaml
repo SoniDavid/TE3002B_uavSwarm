@@ -1,0 +1,44 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# tello_vicon — tunable parameters
+# ─────────────────────────────────────────────────────────────────────────────
+
+vicon_kf_node:
+  ros__parameters:
+    subject_name: "tello1"      # Vicon subject name (must match Vicon Tracker label)
+    dt: 0.01                    # nominal KF timestep (sec); updated live from msg stamps
+
+    # Kalman filter process noise
+    q_pos:  1.0e-3              # position states  [m²/s]
+    q_vel:  1.0e-1              # velocity states  [m²/s³]
+    q_ang:  1.0e-4              # angle states     [rad²/s]
+    q_rate: 1.0e-2              # angular-rate states [rad²/s³]
+
+    # Kalman filter measurement noise
+    # Vicon accuracy: ~1 mm position, ~0.1° angle
+    r_pos:  1.0e-6              # position measurement noise  [m²]
+    r_ang:  3.0e-6              # angle measurement noise     [rad²]
+
+    # Path visualisation — number of poses to keep (100 Hz → 2000 = ~20 s trail)
+    max_path_len: 2000
+
+tello_controller:
+  ros__parameters:
+    # PD gains — tune these during flight tests
+    Kp_xy:  0.5                 # proportional gain for XY position error
+    Kp_z:   0.6                 # proportional gain for Z position error
+    Kp_yaw: 0.4                 # proportional gain for yaw error
+    Kd_xy:  0.2                 # derivative gain for XY velocity
+    Kd_z:   0.2                 # derivative gain for Z velocity
+
+    # Velocity saturation
+    v_max_xy: 0.5               # max XY velocity command [m/s]
+    v_max_z:  0.3               # max Z velocity command  [m/s]
+    yaw_max:  30.0              # max yaw rate command    [deg/s]
+
+    rate_hz:   30.0             # controller update rate
+    timeout_s:  0.5             # zero RC if no state received for this long [s]
+
+tello_bridge:
+  ros__parameters:
+    mock:     false             # set true for offline testing (no real drone)
+    drone_ip: "192.168.10.1"   # default Tello IP over its own WiFi AP

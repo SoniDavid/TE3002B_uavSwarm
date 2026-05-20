@@ -1,0 +1,111 @@
+{
+  "configById": {
+    "3D!main": {
+      "cameraState": {
+        "distance": 4,
+        "perspective": true,
+        "phi": 55,
+        "target": [0, 0, 1],
+        "targetOffset": [0, 0, 0],
+        "targetOrientation": [0, 0, 0, 1],
+        "thetaOffset": -30,
+        "fovy": 45,
+        "near": 0.001,
+        "far": 5000
+      },
+      "followTf": null,
+      "followMode": "follow-none",
+      "scene": {"labelScaleFactor": 1},
+      "transforms": {},
+      "topics": {
+        "/tello1/kf_pose":   {"visible": true, "color": "#51cf66"},
+        "/tello1/kf_path":   {"visible": true, "color": "#51cf66", "lineWidth": 2},
+        "/tello1/reference": {"visible": true, "color": "#ff922b"}
+      },
+      "layers": {}
+    },
+
+    "Plot!position": {
+      "title": "Position tracking: KF estimate vs reference (m)",
+      "paths": [
+        {"value": "/tello1/kf_state.data[0]",                  "enabled": true, "timestampMethod": "receiveTime", "label": "x KF (m)",    "showLine": true},
+        {"value": "/tello1/kf_state.data[2]",                  "enabled": true, "timestampMethod": "receiveTime", "label": "y KF (m)",    "showLine": true},
+        {"value": "/tello1/kf_state.data[4]",                  "enabled": true, "timestampMethod": "receiveTime", "label": "z KF (m)",    "showLine": true},
+        {"value": "/tello1/reference.pose.position.x",         "enabled": true, "timestampMethod": "receiveTime", "label": "x ref (m)",   "showLine": true},
+        {"value": "/tello1/reference.pose.position.y",         "enabled": true, "timestampMethod": "receiveTime", "label": "y ref (m)",   "showLine": true},
+        {"value": "/tello1/reference.pose.position.z",         "enabled": true, "timestampMethod": "receiveTime", "label": "z ref (m)",   "showLine": true}
+      ],
+      "showLegend": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "minYValue": "",
+      "maxYValue": ""
+    },
+
+    "Plot!yaw": {
+      "title": "Yaw: KF estimate vs reference (rad)",
+      "paths": [
+        {"value": "/tello1/kf_state.data[10]", "enabled": true, "timestampMethod": "receiveTime", "label": "yaw KF (rad)",  "showLine": true},
+        {"value": "/tello1/kf_state.data[11]", "enabled": true, "timestampMethod": "receiveTime", "label": "vyaw KF (rad/s)", "showLine": true}
+      ],
+      "showLegend": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "minYValue": "",
+      "maxYValue": ""
+    },
+
+    "Plot!velocity": {
+      "title": "KF velocity estimate: vx, vy, vz (m/s)",
+      "paths": [
+        {"value": "/tello1/kf_state.data[1]", "enabled": true, "timestampMethod": "receiveTime", "label": "vx (m/s)", "showLine": true},
+        {"value": "/tello1/kf_state.data[3]", "enabled": true, "timestampMethod": "receiveTime", "label": "vy (m/s)", "showLine": true},
+        {"value": "/tello1/kf_state.data[5]", "enabled": true, "timestampMethod": "receiveTime", "label": "vz (m/s)", "showLine": true}
+      ],
+      "showLegend": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "minYValue": "",
+      "maxYValue": ""
+    },
+
+    "Plot!rc_cmd": {
+      "title": "RC commands sent to drone: lr, fb, ud, yaw  [-100 … 100]",
+      "paths": [
+        {"value": "/tello1/rc_cmd.data[0]", "enabled": true, "timestampMethod": "receiveTime", "label": "lr  (left/right)",    "showLine": true},
+        {"value": "/tello1/rc_cmd.data[1]", "enabled": true, "timestampMethod": "receiveTime", "label": "fb  (forward/back)",  "showLine": true},
+        {"value": "/tello1/rc_cmd.data[2]", "enabled": true, "timestampMethod": "receiveTime", "label": "ud  (up/down)",       "showLine": true},
+        {"value": "/tello1/rc_cmd.data[3]", "enabled": true, "timestampMethod": "receiveTime", "label": "yaw (rate)",          "showLine": true}
+      ],
+      "showLegend": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "minYValue": "-100",
+      "maxYValue": "100"
+    }
+  },
+
+  "globalVariables": {},
+
+  "layout": {
+    "first": {
+      "first": "3D!main",
+      "second": {
+        "first": "Plot!position",
+        "second": "Plot!yaw",
+        "direction": "column",
+        "splitPercentage": 65
+      },
+      "direction": "row",
+      "splitPercentage": 32
+    },
+    "second": {
+      "first": "Plot!velocity",
+      "second": "Plot!rc_cmd",
+      "direction": "row",
+      "splitPercentage": 50
+    },
+    "direction": "column",
+    "splitPercentage": 62
+  }
+}
