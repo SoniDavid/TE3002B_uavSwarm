@@ -28,6 +28,7 @@ setup(
             'vicon_kf_node    = tello_vicon_scripts.vicon_kf_node:main',
             'tello_controller = tello_vicon_scripts.tello_controller_node:main',
             'tello_bridge     = tello_vicon_scripts.tello_bridge_node:main',
+            'formation_controller = tello_vicon_scripts.formation_controller_node:main',
         ],
     },
 )
