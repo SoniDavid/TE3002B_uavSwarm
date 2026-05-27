@@ -1,0 +1,19 @@
+services:
+  ros-dev:
+    container_name: uav-swarm-container
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    restart: unless-stopped
+    volumes:
+      - ..:/home/dev/ws:cached
+      - home_volume:/home/dev
+      - /tmp/.X11-unix:/tmp/.X11-unix # X11 Socket
+    environment:
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+    network_mode: host
+    command: sleep infinity
+
+volumes:
+  home_volume:
