@@ -1,0 +1,1 @@
+/home/usuario/.gemini/antigravity/scratch/tello_aruco_optimized/tello_aruco_optimized.py

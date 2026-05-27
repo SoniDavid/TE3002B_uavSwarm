@@ -1,0 +1,9 @@
+# genera_aruco.py
+import cv2
+import numpy as np
+
+dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
+marker_img = np.zeros((300, 300), dtype=np.uint8)
+cv2.aruco.generateImageMarker(dictionary, 0, 300, marker_img)  # ID=0
+cv2.imwrite("aruco_id0.png", marker_img)
+print("Guardado aruco_id0.png — imprime y mide el lado en metros")
