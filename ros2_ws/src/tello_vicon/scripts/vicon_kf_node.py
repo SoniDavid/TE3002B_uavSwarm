@@ -94,6 +94,11 @@ class ViconKFNode(Node):
         p = msg.pose.position
         q = msg.pose.orientation
         roll, pitch, yaw = quat_to_euler(q.x, q.y, q.z, q.w)
+        
+        # Reject spurious all-zero frames from Vicon dropout
+        if abs(p.x) < 1e-6 and abs(p.y) < 1e-6 and abs(p.z) < 1e-6:
+            self.get_logger().warn('Rejected zero pose from Vicon', throttle_duration_sec=1.0)
+            return 
 
         # Recompute dt from message timestamps when possible
         stamp_sec = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9

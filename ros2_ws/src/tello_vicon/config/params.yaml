@@ -15,8 +15,8 @@ vicon_kf_node:
 
     # Kalman filter measurement noise
     # Vicon accuracy: ~1 mm position, ~0.1° angle
-    r_pos:  1.0e-6              # position measurement noise  [m²]
-    r_ang:  3.0e-6              # angle measurement noise     [rad²]
+    r_pos:  1.0e-4              # position measurement noise  [m²]
+    r_ang:  3.0e-4              # angle measurement noise     [rad²]
 
     # Path visualisation — number of poses to keep (100 Hz → 2000 = ~20 s trail)
     max_path_len: 2000
