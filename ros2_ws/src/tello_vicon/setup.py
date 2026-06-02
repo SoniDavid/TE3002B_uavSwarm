@@ -30,6 +30,7 @@ setup(
             'tello_controller = tello_vicon_scripts.tello_controller_node:main',
             'tello_bridge     = tello_vicon_scripts.tello_bridge_node:main',
             'vicon_viz_node   = tello_vicon_scripts.vicon_viz_node:main',
+            'formation_controller = tello_vicon_scripts.formation_controller_node:main',
         ],
     },
 )
