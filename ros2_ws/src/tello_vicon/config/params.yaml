@@ -21,6 +21,18 @@ vicon_kf_node:
     # Path visualisation — number of poses to keep (100 Hz → 2000 = ~20 s trail)
     max_path_len: 2000
 
+aruco_node:
+  ros__parameters:
+    marker_size: 0.185
+    marker_id: 1
+    detect_scale: 0.4
+    camera_params_file: "config/camera_params.npz"
+    publish_rate: 20.0  # Hz
+    image_topic: "image_raw"
+    target_z_override: -1.0 # -1 = use detected Z; ≥0 = fix to this height [m]
+    target_distance:    1.0     # standoff: leader hovers this far in front of marker [m]
+    min_distance:       0.4     # hard floor — leader never gets closer than this [m]
+
 tello_controller:
   ros__parameters:
     # PD gains — tune these during flight tests
@@ -42,6 +54,8 @@ tello_bridge:
   ros__parameters:
     mock:     false             # set true for offline testing (no real drone)
     drone_ip: "192.168.10.1"   # default Tello IP over its own WiFi AP
+    publish_image: true
+    image_rate: 20.0
 
 formation_controller:
   ros__parameters:

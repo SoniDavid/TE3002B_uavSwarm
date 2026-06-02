@@ -16,6 +16,7 @@ setup(
         (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
         (os.path.join('share', package_name, 'config', 'foxglove_layouts'), glob('config/foxglove_layouts/*.json')),
         (os.path.join('share', package_name, 'config', 'rviz'), glob('config/rviz/*.rviz')),
+        (os.path.join('share', package_name, 'config'), glob('config/*.npz')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -31,6 +32,7 @@ setup(
             'tello_bridge     = tello_vicon_scripts.tello_bridge_node:main',
             'vicon_viz_node   = tello_vicon_scripts.vicon_viz_node:main',
             'formation_controller = tello_vicon_scripts.formation_controller_node:main',
+            'aruco_node = tello_vicon_scripts.aruco_node:main',
         ],
     },
 )
