@@ -1,0 +1,3 @@
+[submodule "ros2_ws/src/deps/ros2-vicon-humble"]
+	path = ros2_ws/src/deps/ros2-vicon-humble
+	url = https://github.com/Noe-Sanchez/ros2-vicon-humble
