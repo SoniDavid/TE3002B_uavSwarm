@@ -23,6 +23,7 @@ htmlcov/
 # IDE / editor
 .vscode/
 .idea/
+.history
 
 # OS files
 .DS_Store
