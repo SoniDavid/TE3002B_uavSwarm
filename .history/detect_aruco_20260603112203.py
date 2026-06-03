@@ -4,7 +4,7 @@ import time
 import threading
 from djitellopy import Tello
 
-MARKER_SIZE  = 0.185
+MARKER_SIZE  = 0.208
 DETECT_SCALE = 0.4
 
 data          = np.load("camera_params.npz")
