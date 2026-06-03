@@ -179,7 +179,6 @@ class TelloBridgeNode(Node):
             if self._frame_read is not None:
                 self._drone.streamoff()
             self._drone.end()
-        rclpy.shutdown()
 
 
 def main(args=None):
@@ -196,4 +195,5 @@ def main(args=None):
                 node._drone.streamoff()
             node._drone.end()
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()

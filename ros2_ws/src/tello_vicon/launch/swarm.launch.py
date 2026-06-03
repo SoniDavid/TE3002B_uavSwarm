@@ -39,17 +39,19 @@ def _spawn_all(context, params, mock, formation, cam_params):
 
     # ── Per-drone stack ──────────────────────────────────────────────
     for i in range(0, len(parts), 2):
-        subject   = parts[i]
-        drone_ip  = parts[i + 1]
-        is_leader = (subject == leader_ns)
-
-        common = dict(package='tello_vicon', output='screen', namespace=subject)
+        subject  = parts[i]
+        common   = dict(package='tello_vicon', output='screen', namespace=subject)
 
         actions.append(Node(
             **common,
             executable='vicon_kf_node',
             name='vicon_kf_node',
             parameters=[params, {'subject_name': subject}],
+            remappings=[
+                # Vicon driver publishes /vicon/<subject>/<subject>
+                # vicon_kf_node expects  /vicon/<subject>/pose
+                (f'/vicon/{subject}/pose', f'/vicon/{subject}/{subject}'),
+            ],
         ))
         actions.append(Node(
             **common,
@@ -57,17 +59,20 @@ def _spawn_all(context, params, mock, formation, cam_params):
             name='tello_controller',
             parameters=[params],
         ))
-        actions.append(Node(
-            **common,
-            executable='tello_bridge',
-            name='tello_bridge',
-            parameters=[params, {
-                'mock':          mock,
-                'drone_ip':      drone_ip,
-                # Only the leader needs to stream video
-                'publish_image': is_leader,
-            }],
-        ))
+
+    # All Tello objects in one process → shared UDP socket on port 8889.
+    # Replaces the three individual tello_bridge nodes.
+    actions.append(Node(
+        package='tello_vicon',
+        executable='swarm_bridge',
+        name='swarm_bridge',
+        output='screen',
+        parameters=[params, {
+            'drones_cfg': raw,
+            'leader_ns':  leader_ns,
+            'mock':       mock,
+        }],
+    ))
 
     # ArUco node — leader namespace only 
     # Subscribes to /<leader_ns>/image_raw and /<leader_ns>/kf_state.
@@ -104,7 +109,7 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument(
             'drones',
-            default_value='tello0:192.168.1.50:tello1:192.168.1.51:tello2:192.168.1.52',
+            default_value='tello_soni1:192.168.0.103:tello_soni2:192.168.0.100:tello_soni3:192.168.0.101',
             description='Colon-separated subject:ip pairs; first = leader',
         ),
         DeclareLaunchArgument(

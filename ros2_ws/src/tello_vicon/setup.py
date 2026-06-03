@@ -33,6 +33,7 @@ setup(
             'vicon_viz_node   = tello_vicon_scripts.vicon_viz_node:main',
             'formation_controller = tello_vicon_scripts.formation_controller_node:main',
             'aruco_node = tello_vicon_scripts.aruco_node:main',
+            'swarm_bridge = tello_vicon_scripts.swarm_bridge_node:main',
         ],
     },
 )
