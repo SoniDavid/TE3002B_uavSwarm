@@ -49,6 +49,11 @@ def _spawn_all(context, params, mock, formation, cam_params):
             executable='vicon_kf_node',
             name='vicon_kf_node',
             parameters=[params, {'subject_name': subject}],
+            remappings=[
+                # Vicon driver publishes /vicon/<subject>/<subject>
+                # vicon_kf_node expects  /vicon/<subject>/pose
+                (f'/vicon/{subject}/pose', f'/vicon/{subject}/{subject}'),
+            ],
         ))
         actions.append(Node(
             **common,

@@ -161,8 +161,6 @@ class SwarmBridgeNode(Node):
                 self._last_rc_t[ns] = time.time()
 
     def _keepalive(self):
-        """Send rc 0 0 0 0 to any flying drone that hasn't received an RC command
-        recently, preventing the Tello firmware's 15-second auto-land."""
         now = time.time()
         for ns, drone in self._drones.items():
             if drone is None or not self._flying[ns]:

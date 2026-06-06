@@ -4,7 +4,7 @@
 
 vicon_kf_node:
   ros__parameters:
-    subject_name: "tello1"      # Vicon subject name (must match Vicon Tracker label)
+    subject_name: "tello0"      # Vicon subject name (must match Vicon Tracker label)
     dt: 0.01                    # nominal KF timestep (sec); updated live from msg stamps
 
     # Kalman filter process noise
