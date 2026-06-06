@@ -37,18 +37,18 @@ tello_controller:
   ros__parameters:
     # PD gains — tune these during flight tests
     Kp_xy:  0.5                 # proportional gain for XY position error
-    Kp_z:   0.6                 # proportional gain for Z position error
+    Kp_z:   0.3                 # proportional gain for Z position error
     Kp_yaw: 0.4                 # proportional gain for yaw error
     Kd_xy:  0.2                 # derivative gain for XY velocity
-    Kd_z:   0.2                 # derivative gain for Z velocity
+    Kd_z:   0.1                 # derivative gain for Z velocity
 
     # Velocity saturation
     v_max_xy: 0.5               # max XY velocity command [m/s]
     v_max_z:  0.3               # max Z velocity command  [m/s]
     yaw_max:  30.0              # max yaw rate command    [deg/s]
 
-    rate_hz:   30.0             # controller update rate
-    timeout_s:  0.5             # zero RC if no state received for this long [s]
+    rate_hz:   20.0             # controller update rate
+    timeout_s:  15.0             # zero RC if no state received for this long [s]
 
 tello_bridge:
   ros__parameters:
@@ -59,10 +59,10 @@ tello_bridge:
 
 formation_controller:
   ros__parameters:
-    formation:       "V"          # V | LINE | COLUMN | PANORAMIC | RECONSTRUCTION
-    leader_ns:       "tello0"     # ROS namespace of leader drone
-    s1_ns:           "tello1"     # ROS namespace of follower 1
-    s2_ns:           "tello2"     # ROS namespace of follower 2
+    formation:       "LINE"          # V | LINE | COLUMN | PANORAMIC | RECONSTRUCTION
+    leader_ns:       "tello1"     # ROS namespace of leader drone
+    s1_ns:           "tello2"     # ROS namespace of follower 1
+    s2_ns:           "tello3"     # ROS namespace of follower 2
     aruco_topic:     "/aruco/pose"
     aruco_timeout_s: 0.5          # hold position if no ArUco for this long [s]
     rate_hz:         20.0         # reference publish rate [Hz]

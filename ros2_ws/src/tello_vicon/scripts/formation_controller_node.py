@@ -185,7 +185,8 @@ class FormationControllerNode(Node):
         # Latest ArUco pose (world frame)
         self._aruco_pos = np.zeros(3)
         self._aruco_yaw = 0.0
-        self._aruco_last_t: float = 0.0
+        self._aruco_last_t: float = self.get_clock().now().nanoseconds * 1e-9
+        self._aruco_received = False
 
         # ── Subscribers ───────────────────────────────────────────
         def _make_kf_sub(ns: str, key: str):

@@ -59,6 +59,7 @@ class TelloControllerNode(Node):
         self._ref_pos = np.zeros(3)    # [x, y, z] in world frame
         self._ref_yaw = 0.0
         self._last_state_t = 0.0
+        self._ref_received = False     # do not control until first reference arrives
 
         # ── Publishers / subscribers ──────────────────────────────────
         # Relative topic names — resolved under the node's ROS namespace.
@@ -92,11 +93,14 @@ class TelloControllerNode(Node):
             2.0 * (q.w * q.z + q.x * q.y),
             1.0 - 2.0 * (q.y * q.y + q.z * q.z)
         )
+        self._ref_received = True
 
     # ------------------------------------------------------------------
     def _tick(self):
-        # Safety: publish zeros if state is stale or unavailable
-        if self._kf_state is None or (time.time() - self._last_state_t) > self._timeout:
+        # Safety: publish zeros if state is stale, unavailable, or no reference yet
+        if (not self._ref_received
+                or self._kf_state is None
+                or (time.time() - self._last_state_t) > self._timeout):
             self._publish_rc(0, 0, 0, 0)
             return
 
