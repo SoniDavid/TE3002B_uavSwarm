@@ -26,7 +26,7 @@ from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch_ros.actions import Node
 
 
-def _spawn_all(context, params, mock, formation, cam_params):
+def _spawn_all(context, params, mock, formation, cam_params, record_mode, output_dir):
     raw   = context.launch_configurations.get('drones', '')
     parts = [p.strip() for p in raw.split(':') if p.strip()]
 
@@ -76,7 +76,7 @@ def _spawn_all(context, params, mock, formation, cam_params):
         }],
     ))
 
-    # ArUco node — leader namespace only
+    # ── ArUco node — leader namespace only ───────────────────────────
     # Subscribes to /<leader_ns>/image_raw and /<leader_ns>/kf_state.
     # Publishes /aruco/pose (world frame) for formation_controller.
     actions.append(Node(
@@ -87,17 +87,46 @@ def _spawn_all(context, params, mock, formation, cam_params):
         output='screen',
         parameters=[params, {
             'camera_params_file': cam_params,
-            'image_topic':        'image_raw',   # relative → /<leader_ns>/image_raw
+            'image_topic':        'image_raw',
         }],
     ))
 
-    # Formation controller — one for the whole swarm 
+    # ── Formation controller — one for the whole swarm ───────────────
+    # leader_ns, s1_ns, s2_ns MUST be passed explicitly — the node
+    # defaults are tello0/tello1/tello2 which don't match real subjects.
+    follower_nss = [s for s in subjects if s != leader_ns]
+    s1_ns = follower_nss[0] if len(follower_nss) > 0 else ''
+    s2_ns = follower_nss[1] if len(follower_nss) > 1 else ''
+
     actions.append(Node(
         package='tello_vicon',
         executable='formation_controller',
         name='formation_controller',
         output='screen',
-        parameters=[params, {'formation': formation}],
+        parameters=[params, {
+            'formation': formation,
+            'leader_ns': leader_ns,
+            's1_ns':     s1_ns,
+            's2_ns':     s2_ns,
+        }],
+    ))
+
+
+    # ── Video recorder — subscribes to /<ns>/image_raw for each drone ──
+    # Switch mode at runtime:
+    #   ros2 service call /video/set_mode std_srvs/srv/SetBool "data: true"   # all
+    #   ros2 service call /video/set_mode std_srvs/srv/SetBool "data: false"  # leader only
+    actions.append(Node(
+        package='tello_vicon',
+        executable='video_recorder',
+        name='video_recorder',
+        output='screen',
+        parameters=[params, {
+            'drone_subjects': ','.join(subjects),
+            'leader_ns':      leader_ns,
+            'record_mode':    record_mode,
+            'output_dir':     output_dir,
+        }],
     ))
 
     return actions
@@ -111,7 +140,7 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument(
             'drones',
-            default_value='tello0:192.168.0.100:tello1:192.168.0.101:tello2:192.168.0.102',
+            default_value='tello_soni1:192.168.0.100:tello_soni2:192.168.0.102:tello_soni3:192.168.0.101',
             description='Colon-separated subject:ip pairs; first = leader',
         ),
         DeclareLaunchArgument(
@@ -126,13 +155,23 @@ def generate_launch_description():
             'cam_params', default_value=default_cam,
             description='Absolute path to camera_params.npz',
         ),
+        DeclareLaunchArgument(
+            'record_mode', default_value='leader',
+            description='Video recording mode: leader | all',
+        ),
+        DeclareLaunchArgument(
+            'output_dir', default_value='/home/kfcnef/videos',
+            description='Directory to save recordings',
+        ),
         OpaqueFunction(
             function=lambda ctx: _spawn_all(
                 ctx,
                 params,
-                mock      = ctx.launch_configurations.get('mock','false').lower()=='true',
-                formation = ctx.launch_configurations.get('formation', 'LINE'),
-                cam_params= ctx.launch_configurations.get('cam_params', default_cam),
+                mock        = ctx.launch_configurations.get('mock','false').lower()=='true',
+                formation   = ctx.launch_configurations.get('formation', 'LINE'),
+                cam_params  = ctx.launch_configurations.get('cam_params', default_cam),
+                record_mode = ctx.launch_configurations.get('record_mode', 'leader'),
+                output_dir  = ctx.launch_configurations.get('output_dir', ''),
             )
         ),
     ])

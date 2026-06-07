@@ -36,11 +36,11 @@ aruco_node:
 tello_controller:
   ros__parameters:
     # PD gains — tune these during flight tests
-    Kp_xy:  0.5                 # proportional gain for XY position error
-    Kp_z:   0.3                 # proportional gain for Z position error
-    Kp_yaw: 0.4                 # proportional gain for yaw error
-    Kd_xy:  0.2                 # derivative gain for XY velocity
-    Kd_z:   0.1                 # derivative gain for Z velocity
+    Kp_xy:  0.2                 # proportional gain for XY position error
+    Kp_z:   0.2                 # proportional gain for Z position error
+    Kp_yaw: 0.3                 # proportional gain for yaw error
+    Kd_xy:  0.25                 # derivative gain for XY velocity
+    Kd_z:   0.15                 # derivative gain for Z velocity
 
     # Velocity saturation
     v_max_xy: 0.5               # max XY velocity command [m/s]
@@ -48,14 +48,14 @@ tello_controller:
     yaw_max:  30.0              # max yaw rate command    [deg/s]
 
     rate_hz:   20.0             # controller update rate
-    timeout_s:  15.0             # zero RC if no state received for this long [s]
+    timeout_s:  20.0             # zero RC if no state received for this long [s]
 
 tello_bridge:
   ros__parameters:
     mock:     false             # set true for offline testing (no real drone)
     drone_ip: "192.168.10.1"   # default Tello IP over its own WiFi AP
     publish_image: true
-    image_rate: 20.0
+    image_rate: 15.0
 
 formation_controller:
   ros__parameters:

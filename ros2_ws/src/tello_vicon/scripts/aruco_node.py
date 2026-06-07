@@ -94,7 +94,7 @@ class ArucoNode(Node):
         self.declare_parameter('marker_id',          1)
         self.declare_parameter('detect_scale',       0.4)
         self.declare_parameter('camera_params_file', 'calibration/camera_params.npz')
-        self.declare_parameter('publish_rate',       30.0)
+        self.declare_parameter('publish_rate',       20.0)
         self.declare_parameter('image_topic',        'image_raw')
         self.declare_parameter('target_z_override',  -1.0)
         self.declare_parameter('target_distance',    1.0)   # standoff [m]

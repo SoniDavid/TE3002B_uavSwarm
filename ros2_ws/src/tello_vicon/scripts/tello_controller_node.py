@@ -56,10 +56,10 @@ class TelloControllerNode(Node):
 
         # ── State ─────────────────────────────────────────────────────
         self._kf_state: np.ndarray | None = None
-        self._ref_pos = np.zeros(3)    # [x, y, z] in world frame
+        self._ref_pos = np.zeros(3)
         self._ref_yaw = 0.0
         self._last_state_t = 0.0
-        self._ref_received = False     # do not control until first reference arrives
+        self._ref_received = False   # hold RC=0 until first reference arrives
 
         # ── Publishers / subscribers ──────────────────────────────────
         # Relative topic names — resolved under the node's ROS namespace.
@@ -97,10 +97,13 @@ class TelloControllerNode(Node):
 
     # ------------------------------------------------------------------
     def _tick(self):
-        # Safety: publish zeros if state is stale, unavailable, or no reference yet
-        if (not self._ref_received
-                or self._kf_state is None
-                or (time.time() - self._last_state_t) > self._timeout):
+        # Hold zeros until first reference arrives — prevents flying to [0,0,0]
+        if not self._ref_received:
+            self._publish_rc(0, 0, 0, 0)
+            return
+
+        # Safety: publish zeros if state is stale or unavailable
+        if self._kf_state is None or (time.time() - self._last_state_t) > self._timeout:
             self._publish_rc(0, 0, 0, 0)
             return
 
@@ -111,7 +114,11 @@ class TelloControllerNode(Node):
 
         # PD control in world frame
         e_pos = self._ref_pos - pos
-        e_vel = -vel                      # desired velocity = 0 (hold setpoint)
+        e_vel = -vel
+
+        # Clamp position error to max 0.5 m per axis — prevents large
+        # initial transients when reference first arrives far from drone
+        e_pos = np.clip(e_pos, -0.5, 0.5)
 
         v_world = (self._Kp_xy * e_pos[:2] + self._Kd_xy * e_vel[:2])
         vz_cmd  =  self._Kp_z  * e_pos[2] + self._Kd_z  * e_vel[2]
@@ -126,14 +133,14 @@ class TelloControllerNode(Node):
         cy, sy = math.cos(yaw), math.sin(yaw)
         # Body frame: +fb = forward (drone nose), +lr = right
         v_forward = v_world[0] * cy + v_world[1] * sy
-        v_right   = -v_world[0] * sy + v_world[1] * cy
+        v_left    = -v_world[0] * sy + v_world[1] * cy
 
         # Yaw PD
         e_yaw = self._angle_diff(self._ref_yaw, yaw)
         yaw_cmd = float(np.clip(self._Kp_yaw * e_yaw, -self._yaw_max, self._yaw_max))
 
         # Scale to djitellopy range [-100, 100]
-        lr  = int(np.clip(v_right   / self._v_max_xy * 100, -100, 100))
+        lr  = int(np.clip(-v_left / self._v_max_xy * 100, -100, 100))
         fb  = int(np.clip(v_forward / self._v_max_xy * 100, -100, 100))
         ud  = int(np.clip(vz_cmd    / self._v_max_z  * 100, -100, 100))
         yaw_rc = int(np.clip(yaw_cmd / self._yaw_max * 100, -100, 100))

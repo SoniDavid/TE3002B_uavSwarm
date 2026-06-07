@@ -19,6 +19,14 @@ Subscribed : rc_cmd  (Int32MultiArray)  [lr, fb, ud, yaw]
              land    (Bool)
 Published  : battery (Float32)
              image_raw (Image)  — leader only
+
+Global published
+----------------
+/swarm/ready (Bool)  — fired once after ALL drones confirm airborne.
+                       formation_controller waits for this before
+                       sending any reference.  Can also be sent manually:
+                         ros2 topic pub /swarm/ready std_msgs/Bool \
+                           "data: true" --once
 """
 
 import logging
@@ -52,7 +60,7 @@ class SwarmBridgeNode(Node):
         self.declare_parameter('drone_ips',      '192.168.10.1')
         self.declare_parameter('leader_ns',      'tello0')
         self.declare_parameter('mock',           False)
-        self.declare_parameter('image_rate',     30.0)
+        self.declare_parameter('image_rate',     20.0)
 
         subjects   = [s.strip() for s in
                       self.get_parameter('drone_subjects').value.split(',') if s.strip()]
@@ -67,27 +75,32 @@ class SwarmBridgeNode(Node):
                 f'drone_subjects ({len(subjects)}) and drone_ips ({len(ips)}) '
                 f'must have the same length')
 
-        self._drones:      dict[str, Tello | None] = {}
-        self._frame_reads: dict[str, object]        = {}
-        self._flying:      dict[str, bool]          = {}
+        self._drones:      dict[str, Tello | None]   = {}
+        self._frame_reads: dict[str, object]          = {}
+        self._flying:      dict[str, bool]            = {}
         self._locks:       dict[str, threading.Lock] = {}
-        self._last_rc_t:   dict[str, float]          = {}
+        self._last_rc_t:   dict[str, float]           = {}
 
         self._pub_bat:   dict[str, object] = {}
         self._pub_image: dict[str, object] = {}
 
+        # /swarm/ready publisher — fired once after all drones airborne
+        # Using queue_size=1 helps with persistence, but we'll also periodically re-publish
+        self._pub_ready = self.create_publisher(Bool, '/swarm/ready', 1)
+        self._ready_to_publish = False  # gate for periodic re-publishing
+
+        # ── Phase 1: connect all drones sequentially ─────────────
+        # djitellopy requires one handshake at a time (shared UDP socket).
         for i, (ns, ip) in enumerate(zip(subjects, ips)):
-            self._locks[ns]   = threading.Lock()
-            self._flying[ns]  = False
+            self._locks[ns]     = threading.Lock()
+            self._flying[ns]    = False
             self._last_rc_t[ns] = time.time()
 
-            # ── publishers ──────────────────────────────────────────
             self._pub_bat[ns] = self.create_publisher(
                 Float32, f'/{ns}/battery', 10)
             self._pub_image[ns] = self.create_publisher(
                 Image, f'/{ns}/image_raw', 10)
 
-            # ── subscribers ─────────────────────────────────────────
             self.create_subscription(
                 Int32MultiArray, f'/{ns}/rc_cmd',
                 lambda msg, n=ns: self._cb_rc(msg, n), 10)
@@ -95,7 +108,6 @@ class SwarmBridgeNode(Node):
                 Bool, f'/{ns}/land',
                 lambda msg, n=ns: self._cb_land(msg, n), 10)
 
-            # ── connect drone ────────────────────────────────────────
             if self._mock:
                 self._drones[ns] = None
                 self.get_logger().warn(f'[{ns}] MOCK MODE — no real drone')
@@ -109,29 +121,62 @@ class SwarmBridgeNode(Node):
                 drone.connect()
                 bat = drone.get_battery()
                 self.get_logger().info(f'[{ns}] connected {ip} — battery {bat}%')
+                self._drones[ns] = drone
+            except Exception as exc:
+                self.get_logger().error(
+                    f'[{ns}] connection failed: {exc} — skipping')
+                self._drones[ns] = None
 
-                drone.takeoff()
-                self._flying[ns] = True
-                self.get_logger().info(f'[{ns}] airborne')
+        # ── Phase 2: take off ALL drones in parallel ──────────────
+        # All Tello objects already share the same UDP socket (same process),
+        # so parallel takeoff commands are safe.
+        if not self._mock:
+            takeoff_threads = []
 
-                is_leader = (ns == leader_ns)
-                if is_leader:
-                    vs_port = _BASE_VS_PORT + i
+            def _takeoff(ns: str, drone: Tello, index: int):
+                try:
+                    drone.takeoff()
+                    with self._locks[ns]:
+                        self._flying[ns] = True
+                    self.get_logger().info(f'[{ns}] airborne')
+
+                    # Camera stream — all drones get a stream on unique UDP ports
+                    # so video_recorder_node can subscribe to any of them.
+                    vs_port = _BASE_VS_PORT + index
                     if vs_port != _BASE_VS_PORT:
                         drone.change_vs_udp(vs_port)
                     drone.streamon()
-                    time.sleep(1.0)
+                    time.sleep(0.5)
                     self._frame_reads[ns] = drone.get_frame_read()
-                    self.get_logger().info(f'[{ns}] camera stream started on port {vs_port}')
+                    self.get_logger().info(
+                        f'[{ns}] camera stream on port {vs_port}')
+                except Exception as exc:
+                    self.get_logger().error(f'[{ns}] takeoff failed: {exc}')
 
-                self._drones[ns] = drone
+            for i, (ns, drone) in enumerate(self._drones.items()):
+                if drone is None:
+                    continue
+                t = threading.Thread(
+                    target=_takeoff, args=(ns, drone, i), daemon=True)
+                takeoff_threads.append(t)
+                t.start()
 
-            except Exception as exc:
-                self.get_logger().error(
-                    f'[{ns}] failed to connect/takeoff: {exc} — skipping this drone')
-                self._drones[ns] = None
+            # Wait until every drone has confirmed airborne
+            for t in takeoff_threads:
+                t.join()
 
-        # ── timers ──────────────────────────────────────────────────
+            self.get_logger().info('All drones airborne')
+
+            # Signal formation_controller it can start sending references
+            time.sleep(0.5)   # let subscribers connect
+            self._ready_to_publish = True
+            self._pub_ready.publish(Bool(data=True))
+            self.get_logger().info('Published /swarm/ready')
+            
+            # Periodically re-publish to ensure late subscribers get the message
+            self.create_timer(1.0, self._publish_ready_periodic)
+
+        # ── Timers ────────────────────────────────────────────────
         self.create_timer(5.0, self._publish_batteries)
         self.create_timer(4.0, self._keepalive)   # firmware auto-lands at 15 s
 
@@ -144,7 +189,7 @@ class SwarmBridgeNode(Node):
 
         self.get_logger().info('swarm_bridge ready')
 
-    # ── RC ───────────────────────────────────────────────────────────
+    # ── RC ────────────────────────────────────────────────────────
 
     def _cb_rc(self, msg: Int32MultiArray, ns: str):
         if len(msg.data) < 4:
@@ -161,6 +206,7 @@ class SwarmBridgeNode(Node):
                 self._last_rc_t[ns] = time.time()
 
     def _keepalive(self):
+        """Send neutral RC if controller goes silent — prevents 15 s auto-land."""
         now = time.time()
         for ns, drone in self._drones.items():
             if drone is None or not self._flying[ns]:
@@ -170,10 +216,15 @@ class SwarmBridgeNode(Node):
                     if self._flying[ns]:
                         drone.send_rc_control(0, 0, 0, 0)
 
+    def _publish_ready_periodic(self):
+        """Periodically re-publish /swarm/ready to handle late subscribers."""
+        if self._ready_to_publish:
+            self._pub_ready.publish(Bool(data=True))
+
     def _cb_land(self, msg: Bool, ns: str):
         self._do_land(ns)
 
-    # ── Image ────────────────────────────────────────────────────────
+    # ── Image ─────────────────────────────────────────────────────
 
     def _publish_frames(self):
         for ns, fr in self._frame_reads.items():
@@ -191,7 +242,7 @@ class SwarmBridgeNode(Node):
             msg.data     = frame.tobytes()
             self._pub_image[ns].publish(msg)
 
-    # ── Battery ──────────────────────────────────────────────────────
+    # ── Battery ───────────────────────────────────────────────────
 
     def _publish_batteries(self):
         for ns, drone in self._drones.items():
@@ -206,7 +257,7 @@ class SwarmBridgeNode(Node):
                 self.get_logger().warn(f'[{ns}] low battery {bat}% — landing')
                 self._do_land(ns)
 
-    # ── Land / shutdown ──────────────────────────────────────────────
+    # ── Land / shutdown ───────────────────────────────────────────
 
     def _do_land(self, ns: str):
         with self._locks[ns]:
@@ -220,17 +271,49 @@ class SwarmBridgeNode(Node):
                 self._flying[ns] = False
                 self.get_logger().info(f'[{ns}] landed')
 
-    def _shutdown_handler(self, *_):
-        self.get_logger().info('Shutdown — landing all drones')
+    def _land_all_parallel(self):
+        """Land all flying drones simultaneously using threads."""
+        threads = []
         for ns in list(self._drones.keys()):
-            self._do_land(ns)
+            if self._flying.get(ns):
+                t = threading.Thread(target=self._do_land, args=(ns,), daemon=True)
+                threads.append(t)
+                t.start()
+        for t in threads:
+            t.join()
+        self.get_logger().info('All drones landed')
+
+    def _shutdown_handler(self, *_):
+        self.get_logger().info('Shutdown — landing all drones simultaneously')
+        self._land_all_parallel()
         for ns, drone in self._drones.items():
             if drone is None:
                 continue
             if ns in self._frame_reads:
-                drone.streamoff()
-            drone.end()
-        rclpy.shutdown()
+                try:
+                    drone.streamoff()
+                except Exception:
+                    pass
+            try:
+                drone.end()
+            except Exception:
+                pass
+
+    def destroy_node(self):
+        self._land_all_parallel()
+        for ns, drone in self._drones.items():
+            if drone is None:
+                continue
+            if ns in self._frame_reads:
+                try:
+                    drone.streamoff()
+                except Exception:
+                    pass
+            try:
+                drone.end()
+            except Exception:
+                pass
+        super().destroy_node()
 
 
 def main(args=None):
@@ -241,13 +324,6 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
-        for ns in list(node._drones.keys()):
-            node._do_land(ns)
-        for ns, drone in node._drones.items():
-            if drone is None:
-                continue
-            if ns in node._frame_reads:
-                drone.streamoff()
-            drone.end()
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()

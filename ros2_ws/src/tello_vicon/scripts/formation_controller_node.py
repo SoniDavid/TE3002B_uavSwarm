@@ -45,6 +45,8 @@ Topics subscribed
   /<s1_ns>/kf_state        (Float64MultiArray)
   /<s2_ns>/kf_state        (Float64MultiArray)
   <aruco_topic>            (PoseStamped)
+  /swarm/ready             (Bool)               published by swarm_bridge when all
+                                                drones are airborne
 """
 
 import math
@@ -62,12 +64,12 @@ from std_msgs.msg import Float64MultiArray
 # Each entry: {"dx": forward, "dy": left, "dz": up, "dyaw": deg}
 FORMATIONS: dict[str, dict[str, dict]] = {
     "V": {
-        "S1": {"dx": -0.50, "dy":  0.50, "dz": 0.0, "dyaw": 0.0},
-        "S2": {"dx": -0.50, "dy": -0.50, "dz": 0.0, "dyaw": 0.0},
+        "S1": {"dx": -0.50, "dy":  1.00, "dz": 0.0, "dyaw": 0.0},
+        "S2": {"dx": -0.50, "dy": -1.00, "dz": 0.0, "dyaw": 0.0},
     },
     "LINE": {
-        "S1": {"dx":  0.0,  "dy":  0.80, "dz": 0.0, "dyaw": 0.0},
-        "S2": {"dx":  0.0,  "dy": -0.80, "dz": 0.0, "dyaw": 0.0},
+        "S1": {"dx":  0.0,  "dy":  1.00, "dz": 0.0, "dyaw": 0.0},
+        "S2": {"dx":  0.0,  "dy": -1.00, "dz": 0.0, "dyaw": 0.0},
     },
     "COLUMN": {
         "S1": {"dx": -0.60, "dy":  0.0,  "dz":  0.20, "dyaw": 0.0},
@@ -132,7 +134,6 @@ def _body_offset_to_world(leader_pos: np.ndarray, leader_yaw: float,
 
     Returns (x_w, y_w, z_w, yaw_w).
     """
-    # Rotate body offset into world frame (2-D rotation about Z)
     cy, sy = math.cos(leader_yaw), math.sin(leader_yaw)
     dx_w = offset["dx"] * cy - offset["dy"] * sy
     dy_w = offset["dx"] * sy + offset["dy"] * cy
@@ -178,15 +179,22 @@ class FormationControllerNode(Node):
         self._aruco_timeout = self.get_parameter("aruco_timeout_s").value
 
         # ── State ─────────────────────────────────────────────────
-        # Latest KF states: np.array of length 12 or None
         self._state: dict[str, np.ndarray | None] = {
             "leader": None, "s1": None, "s2": None
         }
-        # Latest ArUco pose (world frame)
-        self._aruco_pos = np.zeros(3)
-        self._aruco_yaw = 0.0
-        self._aruco_last_t: float = self.get_clock().now().nanoseconds * 1e-9
-        self._aruco_received = False
+
+        # ArUco: initialise last_t to NOW so aruco_fresh starts False
+        # correctly instead of being True at t=0 (unix epoch bug)
+        self._aruco_pos      = np.zeros(3)
+        self._aruco_yaw      = 0.0
+        self._aruco_last_t   = self.get_clock().now().nanoseconds * 1e-9
+        self._aruco_received = False   # True only after first real detection
+
+        # Ready gate: do not publish references until swarm_bridge
+        # confirms every drone is airborne via /swarm/ready.
+        # Can also be set manually:
+        #   ros2 topic pub /swarm/ready std_msgs/Bool "data: true" --once
+
 
         # ── Subscribers ───────────────────────────────────────────
         def _make_kf_sub(ns: str, key: str):
@@ -223,6 +231,7 @@ class FormationControllerNode(Node):
         if len(msg.data) >= 12:
             self._state[key] = np.array(msg.data)
 
+
     def _cb_aruco(self, msg: PoseStamped):
         """Store the latest ArUco pose (world frame)."""
         self._aruco_pos[0] = msg.pose.position.x
@@ -233,18 +242,32 @@ class FormationControllerNode(Node):
             2.0 * (q.w * q.z + q.x * q.y),
             1.0 - 2.0 * (q.y * q.y + q.z * q.z),
         )
-        self._aruco_last_t = self.get_clock().now().nanoseconds * 1e-9
+        self._aruco_last_t   = self.get_clock().now().nanoseconds * 1e-9
+        self._aruco_received = True
 
     # ── Main tick ─────────────────────────────────────────────────
 
     def _tick(self):
+        # Single guard — wait until leader KF state is available.
+        # This handles the startup race: _tick runs at 20 Hz but kf_state
+        # arrives at ~100 Hz, so the first few ticks may fire before
+        # the first Vicon message arrives. No external ready signal needed.
+        ldr = self._state["leader"]
+        if ldr is None:
+            self.get_logger().warn(
+                'Waiting for leader kf_state — check Vicon remap',
+                throttle_duration_sec=2.0)
+            return
+
         now = self.get_clock().now().nanoseconds * 1e-9
 
-        # ── 1. Leader reference: track the ArUco marker ──────────
-        aruco_fresh = (now - self._aruco_last_t) < self._aruco_timeout
+        # ── 1. Leader reference ───────────────────────────────────
+        # Use ArUco only when a real detection is fresh (within timeout).
+        # Otherwise hold current Vicon position.
+        aruco_fresh = (self._aruco_received and
+                       (now - self._aruco_last_t) < self._aruco_timeout)
 
         if aruco_fresh:
-            # Leader simply goes to the ArUco pose
             leader_ref = _make_reference(
                 self._aruco_pos[0],
                 self._aruco_pos[1],
@@ -252,24 +275,13 @@ class FormationControllerNode(Node):
                 self._aruco_yaw,
             )
         else:
-            # No fresh ArUco — hold leader at its current position
-            if self._state["leader"] is not None:
-                x = self._state["leader"]
-                leader_ref = _make_reference(
-                    x[IDX_PX], x[IDX_PY], x[IDX_PZ], x[IDX_YAW])
-            else:
-                return   # No state yet; publish nothing
+            leader_ref = _make_reference(
+                ldr[IDX_PX], ldr[IDX_PY], ldr[IDX_PZ], ldr[IDX_YAW])
 
         leader_ref.header.stamp = self.get_clock().now().to_msg()
         self._pub_leader.publish(leader_ref)
 
-        # ── 2. Followers: offset from the *current* leader state ──
-        # Use the latest KF state for the leader so follower targets
-        # track the drone's actual position, not just its setpoint.
-        ldr = self._state["leader"]
-        if ldr is None:
-            return
-
+        # ── 2. Followers: offset from leader's real position ──────
         leader_pos = np.array([ldr[IDX_PX], ldr[IDX_PY], ldr[IDX_PZ]])
         leader_yaw = ldr[IDX_YAW]
         now_msg    = self.get_clock().now().to_msg()
@@ -294,4 +306,5 @@ def main(args=None):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()

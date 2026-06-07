@@ -51,7 +51,7 @@ class TelloBridgeNode(Node):
         self.declare_parameter('mock',          False)
         self.declare_parameter('drone_ip',      '192.168.10.1')
         self.declare_parameter('publish_image', True)
-        self.declare_parameter('image_rate',    30.0)
+        self.declare_parameter('image_rate',    20.0)
 
         self._mock          = self.get_parameter('mock').value
         drone_ip            = self.get_parameter('drone_ip').value
