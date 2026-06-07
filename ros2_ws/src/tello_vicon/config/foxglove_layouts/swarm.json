@@ -1,0 +1,164 @@
+{
+  "configById": {
+    "3D!main": {
+      "cameraState": {
+        "distance": 6,
+        "perspective": true,
+        "phi": 60,
+        "target": [0, 0, 1],
+        "targetOffset": [0, 0, 0],
+        "targetOrientation": [0, 0, 0, 1],
+        "thetaOffset": -45,
+        "fovy": 45,
+        "near": 0.001,
+        "far": 5000
+      },
+      "followTf": null,
+      "followMode": "follow-none",
+      "scene": {"labelScaleFactor": 1},
+      "transforms": {},
+      "topics": {
+        "/tello1/kf_pose":   {"visible": true, "color": "#51cf66"},
+        "/tello1/kf_path":   {"visible": true, "color": "#51cf66", "lineWidth": 2},
+        "/tello1/reference": {"visible": true, "color": "#a9e34b"},
+        "/tello2/kf_pose":   {"visible": true, "color": "#74c0fc"},
+        "/tello2/kf_path":   {"visible": true, "color": "#74c0fc", "lineWidth": 2},
+        "/tello2/reference": {"visible": true, "color": "#a5d8ff"},
+        "/tello3/kf_pose":   {"visible": true, "color": "#ff6b6b"},
+        "/tello3/kf_path":   {"visible": true, "color": "#ff6b6b", "lineWidth": 2},
+        "/tello3/reference": {"visible": true, "color": "#ffa8a8"}
+      },
+      "layers": {}
+    },
+
+    "Plot!pos_t1": {
+      "title": "tello1 — position vs reference (m)",
+      "paths": [
+        {"value": "/tello1/kf_state.data[0]",          "enabled": true, "timestampMethod": "receiveTime", "label": "x KF",  "showLine": true},
+        {"value": "/tello1/kf_state.data[2]",          "enabled": true, "timestampMethod": "receiveTime", "label": "y KF",  "showLine": true},
+        {"value": "/tello1/kf_state.data[4]",          "enabled": true, "timestampMethod": "receiveTime", "label": "z KF",  "showLine": true},
+        {"value": "/tello1/reference.pose.position.x", "enabled": true, "timestampMethod": "receiveTime", "label": "x ref", "showLine": true},
+        {"value": "/tello1/reference.pose.position.y", "enabled": true, "timestampMethod": "receiveTime", "label": "y ref", "showLine": true},
+        {"value": "/tello1/reference.pose.position.z", "enabled": true, "timestampMethod": "receiveTime", "label": "z ref", "showLine": true}
+      ],
+      "showLegend": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "minYValue": "",
+      "maxYValue": ""
+    },
+
+    "Plot!pos_t2": {
+      "title": "tello2 — position vs reference (m)",
+      "paths": [
+        {"value": "/tello2/kf_state.data[0]",          "enabled": true, "timestampMethod": "receiveTime", "label": "x KF",  "showLine": true},
+        {"value": "/tello2/kf_state.data[2]",          "enabled": true, "timestampMethod": "receiveTime", "label": "y KF",  "showLine": true},
+        {"value": "/tello2/kf_state.data[4]",          "enabled": true, "timestampMethod": "receiveTime", "label": "z KF",  "showLine": true},
+        {"value": "/tello2/reference.pose.position.x", "enabled": true, "timestampMethod": "receiveTime", "label": "x ref", "showLine": true},
+        {"value": "/tello2/reference.pose.position.y", "enabled": true, "timestampMethod": "receiveTime", "label": "y ref", "showLine": true},
+        {"value": "/tello2/reference.pose.position.z", "enabled": true, "timestampMethod": "receiveTime", "label": "z ref", "showLine": true}
+      ],
+      "showLegend": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "minYValue": "",
+      "maxYValue": ""
+    },
+
+    "Plot!pos_t3": {
+      "title": "tello3 — position vs reference (m)",
+      "paths": [
+        {"value": "/tello3/kf_state.data[0]",          "enabled": true, "timestampMethod": "receiveTime", "label": "x KF",  "showLine": true},
+        {"value": "/tello3/kf_state.data[2]",          "enabled": true, "timestampMethod": "receiveTime", "label": "y KF",  "showLine": true},
+        {"value": "/tello3/kf_state.data[4]",          "enabled": true, "timestampMethod": "receiveTime", "label": "z KF",  "showLine": true},
+        {"value": "/tello3/reference.pose.position.x", "enabled": true, "timestampMethod": "receiveTime", "label": "x ref", "showLine": true},
+        {"value": "/tello3/reference.pose.position.y", "enabled": true, "timestampMethod": "receiveTime", "label": "y ref", "showLine": true},
+        {"value": "/tello3/reference.pose.position.z", "enabled": true, "timestampMethod": "receiveTime", "label": "z ref", "showLine": true}
+      ],
+      "showLegend": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "minYValue": "",
+      "maxYValue": ""
+    },
+
+    "Plot!rc_t1": {
+      "title": "tello1 — RC commands [-100…100]",
+      "paths": [
+        {"value": "/tello1/rc_cmd.data[0]", "enabled": true, "timestampMethod": "receiveTime", "label": "lr",  "showLine": true},
+        {"value": "/tello1/rc_cmd.data[1]", "enabled": true, "timestampMethod": "receiveTime", "label": "fb",  "showLine": true},
+        {"value": "/tello1/rc_cmd.data[2]", "enabled": true, "timestampMethod": "receiveTime", "label": "ud",  "showLine": true},
+        {"value": "/tello1/rc_cmd.data[3]", "enabled": true, "timestampMethod": "receiveTime", "label": "yaw", "showLine": true}
+      ],
+      "showLegend": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "minYValue": "-100",
+      "maxYValue": "100"
+    },
+
+    "Plot!rc_t2": {
+      "title": "tello2 — RC commands [-100…100]",
+      "paths": [
+        {"value": "/tello2/rc_cmd.data[0]", "enabled": true, "timestampMethod": "receiveTime", "label": "lr",  "showLine": true},
+        {"value": "/tello2/rc_cmd.data[1]", "enabled": true, "timestampMethod": "receiveTime", "label": "fb",  "showLine": true},
+        {"value": "/tello2/rc_cmd.data[2]", "enabled": true, "timestampMethod": "receiveTime", "label": "ud",  "showLine": true},
+        {"value": "/tello2/rc_cmd.data[3]", "enabled": true, "timestampMethod": "receiveTime", "label": "yaw", "showLine": true}
+      ],
+      "showLegend": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "minYValue": "-100",
+      "maxYValue": "100"
+    },
+
+    "Plot!rc_t3": {
+      "title": "tello3 — RC commands [-100…100]",
+      "paths": [
+        {"value": "/tello3/rc_cmd.data[0]", "enabled": true, "timestampMethod": "receiveTime", "label": "lr",  "showLine": true},
+        {"value": "/tello3/rc_cmd.data[1]", "enabled": true, "timestampMethod": "receiveTime", "label": "fb",  "showLine": true},
+        {"value": "/tello3/rc_cmd.data[2]", "enabled": true, "timestampMethod": "receiveTime", "label": "ud",  "showLine": true},
+        {"value": "/tello3/rc_cmd.data[3]", "enabled": true, "timestampMethod": "receiveTime", "label": "yaw", "showLine": true}
+      ],
+      "showLegend": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "minYValue": "-100",
+      "maxYValue": "100"
+    }
+  },
+
+  "globalVariables": {},
+
+  "layout": {
+    "first": {
+      "first": "3D!main",
+      "second": {
+        "first": "Plot!pos_t1",
+        "second": {
+          "first": "Plot!pos_t2",
+          "second": "Plot!pos_t3",
+          "direction": "row",
+          "splitPercentage": 50
+        },
+        "direction": "row",
+        "splitPercentage": 33
+      },
+      "direction": "row",
+      "splitPercentage": 30
+    },
+    "second": {
+      "first": "Plot!rc_t1",
+      "second": {
+        "first": "Plot!rc_t2",
+        "second": "Plot!rc_t3",
+        "direction": "row",
+        "splitPercentage": 50
+      },
+      "direction": "row",
+      "splitPercentage": 33
+    },
+    "direction": "column",
+    "splitPercentage": 58
+  }
+}

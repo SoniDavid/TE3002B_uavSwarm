@@ -1,4 +1,6 @@
-# Calibración de Cámara, Detección ArUco y Control de Vuelo — DJI Tello
+# TE3002B_uavSwarm
+
+## Calibración de Cámara y Detección ArUco — DJI Tello
 
 Proyecto final para calibrar la cámara del dron **DJI Tello**, detectar marcadores **ArUco** y controlar el vuelo de forma autónoma para seguir un marcador en tiempo real.
 

@@ -1,0 +1,70 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.5
+      Cell Size: 1
+      Class: rviz_default_plugins/Grid
+      Color: 160; 160; 164
+      Enabled: true
+      Name: Grid
+    - Class: rviz_default_plugins/TF
+      Enabled: true
+      Frame Timeout: 15
+      Marker Scale: 0.3
+      Name: TF
+      Show Arrows: true
+      Show Axes: true
+      Show Names: true
+    - Class: rviz_default_plugins/Pose
+      Enabled: true
+      Name: "tello_soni1 (raw)"
+      Shape: Arrow
+      Color: 255; 85; 0
+      Topic:
+        Value: /vicon/tello_soni1/tello_soni1
+    - Class: rviz_default_plugins/Path
+      Enabled: true
+      Name: "tello_soni1 path"
+      Color: 255; 170; 0
+      Topic:
+        Value: /vicon/tello_soni1/path
+    - Class: rviz_default_plugins/Pose
+      Enabled: true
+      Name: "robomaster_soni (raw)"
+      Shape: Arrow
+      Color: 0; 170; 255
+      Topic:
+        Value: /vicon/robomaster_soni/robomaster_soni
+    - Class: rviz_default_plugins/Path
+      Enabled: true
+      Name: "robomaster_soni path"
+      Color: 85; 0; 255
+      Topic:
+        Value: /vicon/robomaster_soni/path
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: world
+    Frame Rate: 30
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 5
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0.5
+      Pitch: 0.6
+      Yaw: 0.785
+      Name: Current View
+Window Geometry:
+  Height: 900
+  Width: 1400
