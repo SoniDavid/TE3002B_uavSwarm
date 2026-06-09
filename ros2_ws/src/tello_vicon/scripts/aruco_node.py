@@ -24,12 +24,12 @@ image_raw → [detect thread] → solvePnP → camera-frame tvec/rvec
 
 Parameters
 ----------
-marker_size         float   ArUco marker side length [m]       (default 0.185)
+marker_size         float   ArUco marker side length [m]       (default 0.208)
 marker_id           int     ArUco ID to track                  (default 1)
 detect_scale        float   downscale factor for detection     (default 0.4)
 camera_params_file  str     path to .npz with K and dist       (required)
-publish_rate        float   output publish rate [Hz]           (default 30.0)
-image_topic         str     image topic name (relative)        (default image_raw)
+publish_rate        float   output publish rate [Hz]           (default 15.0)
+image_topic         str     compressed image topic (relative)  (default image_raw/compressed)
 target_z_override   float   fix world-Z to this height [m];
                             -1.0 = use detected Z              (default -1.0)
 target_distance     float   standoff: leader hovers this far
@@ -46,7 +46,7 @@ import numpy as np
 import rclpy
 from geometry_msgs.msg import PoseStamped
 from rclpy.node import Node
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import CompressedImage, Image
 from std_msgs.msg import Bool, Float32, Float64MultiArray
 
 # ── Camera → body frame rotation ────────────────────────────────────────────
@@ -90,12 +90,12 @@ class ArucoNode(Node):
         super().__init__('aruco_node')
 
         # ── Parameters ───────────────────────────────────────────────
-        self.declare_parameter('marker_size',        0.185)
+        self.declare_parameter('marker_size',        0.208)
         self.declare_parameter('marker_id',          1)
         self.declare_parameter('detect_scale',       0.4)
         self.declare_parameter('camera_params_file', 'calibration/camera_params.npz')
-        self.declare_parameter('publish_rate',       20.0)
-        self.declare_parameter('image_topic',        'image_raw')
+        self.declare_parameter('publish_rate',       15.0)
+        self.declare_parameter('image_topic',        'image_raw/compressed')
         self.declare_parameter('target_z_override',  -1.0)
         self.declare_parameter('target_distance',    1.0)   # standoff [m]
         self.declare_parameter('min_distance',       0.4)   # hard floor [m]
@@ -148,7 +148,7 @@ class ArucoNode(Node):
 
         # ── Subscribers ───────────────────────────────────────────────
         # Both topics are relative → resolved under /<leader_ns>/
-        self.create_subscription(Image,              img_topic,  self._cb_image, 10)
+        self.create_subscription(CompressedImage,    img_topic,  self._cb_image, 10)
         self.create_subscription(Float64MultiArray,  'kf_state', self._cb_kf,    10)
 
         # ── Publishers ────────────────────────────────────────────────
@@ -168,9 +168,12 @@ class ArucoNode(Node):
 
     # ── Callbacks ─────────────────────────────────────────────────────
 
-    def _cb_image(self, msg: Image):
-        frame = np.frombuffer(msg.data, dtype=np.uint8) \
-                  .reshape((msg.height, msg.width, 3)).copy()
+    def _cb_image(self, msg: CompressedImage):
+        # Decode JPEG compressed image
+        buf   = np.frombuffer(msg.data, dtype=np.uint8)
+        frame = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+        if frame is None:
+            return
         with self._frame_lock:
             self._latest_frame = frame
 

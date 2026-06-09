@@ -1,8 +1,8 @@
 # 02_calibrate.py
 import cv2, numpy as np, glob
 
-CHECKERBOARD = (9, 6)       # esquinas internas (no cuadros)
-SQUARE_SIZE  = 0.025        # metros — ajusta según tu impresión real
+CHECKERBOARD = (7, 5)       # esquinas internas (no cuadros)
+SQUARE_SIZE  = 0.03        # metros — ajusta según tu impresión real
 
 criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
 
@@ -11,7 +11,7 @@ objp[:, :2] = np.mgrid[0:CHECKERBOARD[0], 0:CHECKERBOARD[1]].T.reshape(-1, 2)
 objp *= SQUARE_SIZE
 
 obj_pts, img_pts = [], []
-images = sorted(glob.glob("calib_frames/*.png"))
+images = sorted(glob.glob("../calib_frames/calib_framesAbraham/*.png"))
 print(f"{len(images)} imágenes encontradas")
 
 valid = 0
@@ -39,5 +39,5 @@ else:
     print(f"\nRMS error: {rms:.4f} px  {'OK' if rms < 1.0 else '— considera recapturar'}")
     print(f"K:\n{K}")
     print(f"dist: {dist.ravel()}")
-    np.savez("camera_params.npz", K=K, dist=dist)
+    np.savez("camera_paramsAbraham.npz", K=K, dist=dist)
     print("\ncamera_params.npz guardado")

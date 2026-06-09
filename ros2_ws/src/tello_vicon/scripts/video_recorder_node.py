@@ -37,7 +37,7 @@ import cv2
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import CompressedImage, Image
 from std_msgs.msg import String
 from std_srvs.srv import SetBool
 
@@ -78,7 +78,7 @@ class VideoRecorderNode(Node):
         # Subscribe to image_raw for every drone
         for ns in subjects:
             self.create_subscription(
-                Image, f'/{ns}/image_raw',
+                CompressedImage, f'/{ns}/image_raw/compressed',
                 lambda msg, n=ns: self._cb_image(msg, n), 5)
 
         # Service to switch mode at runtime
@@ -134,14 +134,18 @@ class VideoRecorderNode(Node):
 
     # ── Image callback ────────────────────────────────────────────
 
-    def _cb_image(self, msg: Image, ns: str):
+    def _cb_image(self, msg: CompressedImage, ns: str):
         with self._lock:
             if not self._recording.get(ns):
                 return
 
             # Convert ROS Image → numpy BGR
-            frame = np.frombuffer(msg.data, dtype=np.uint8).reshape(
-                (msg.height, msg.width, 3))
+            np_arr = np.frombuffer(msg.data, np.uint8)
+            frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            
+            if frame is None:
+                self.get_logger().error(f'[{ns}] Failed to decode compressed image')
+                return
 
             # Open writer on first frame (we learn the resolution here)
             if self._writers[ns] is None:

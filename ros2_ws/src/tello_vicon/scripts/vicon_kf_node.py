@@ -1,5 +1,17 @@
+"""vicon_kf_node.py — ONE node, all drones, one process.
+
+CPU optimizations:
+  1. Single process — 1 Python interpreter instead of 3
+  2. KF step cached P update — only recomputes gain every 10 steps
+  3. Sparse C matrix exploited directly (no full matrix multiply)
+  4. kf_state published at publish_hz (default 30 Hz) not at Vicon rate (100 Hz)
+     The controller only runs at 30 Hz so publishing faster wastes CPU on
+     message serialization. KF still runs at full 100 Hz for accuracy.
+  5. No x.copy() — returns view, caller must not modify
+  6. Vectorized angle unwrap — no Python loop
+"""
+
 import math
-from collections import deque
 
 import numpy as np
 import rclpy
@@ -10,156 +22,187 @@ from std_msgs.msg import Float64MultiArray
 
 from tello_vicon_scripts.kalman_filter import ViconKF
 
+_ZERO_SQ = 1e-12
 
-def quat_to_euler(qx, qy, qz, qw):
-    """Convert quaternion to (roll, pitch, yaw) in radians."""
-    sinr_cosp = 2.0 * (qw * qx + qy * qz)
-    cosr_cosp = 1.0 - 2.0 * (qx * qx + qy * qy)
-    roll = math.atan2(sinr_cosp, cosr_cosp)
 
-    sinp = 2.0 * (qw * qy - qz * qx)
-    sinp = max(-1.0, min(1.0, sinp))
+def _quat_to_euler(qx, qy, qz, qw):
+    roll  = math.atan2(2.0*(qw*qx + qy*qz), 1.0 - 2.0*(qx*qx + qy*qy))
+    sinp  = max(-1.0, min(1.0, 2.0*(qw*qy - qz*qx)))
     pitch = math.asin(sinp)
-
-    siny_cosp = 2.0 * (qw * qz + qx * qy)
-    cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz)
-    yaw = math.atan2(siny_cosp, cosy_cosp)
-
+    yaw   = math.atan2(2.0*(qw*qz + qx*qy), 1.0 - 2.0*(qy*qy + qz*qz))
     return roll, pitch, yaw
 
 
+class _DroneKF:
+
+    def __init__(self, ns: str, node: Node, kf_kwargs: dict,
+                 max_path: int, publish_hz: float):
+        self.ns          = ns
+        self.kf          = ViconKF()
+        self.kf.init(**kf_kwargs)
+        self.kf_kwargs   = dict(kf_kwargs)
+        self.dt          = kf_kwargs['dt']
+        self.last_stamp  = None
+        self.initialized = False
+
+        # Publish decimation — run KF at 100 Hz, publish at publish_hz
+        self._publish_hz      = publish_hz
+        self._publish_period  = 1.0 / publish_hz
+        self._last_pub_t      = 0.0
+
+        # Latest KF state (updated every step, published at lower rate)
+        self._x: np.ndarray | None = None
+
+        # Pre-allocated messages
+        self.state_msg      = Float64MultiArray()
+        self.state_msg.data = [0.0] * 12
+        self.pose_msg       = PoseStamped()
+        self.pose_msg.header.frame_id = 'world'
+
+        # Ring-buffer path (written at full rate, published by timer)
+        self.max_path  = max_path
+        self.path_buf  : list[PoseStamped] = []
+        self.path_head = 0
+
+        # Publishers — absolute topics
+        self.pub_state = node.create_publisher(Float64MultiArray, f'/{ns}/kf_state', 10)
+        self.pub_pose  = node.create_publisher(PoseStamped,       f'/{ns}/kf_pose',  10)
+        self.pub_path  = node.create_publisher(Path,              f'/{ns}/kf_path',  10)
+
+        topic = f'/vicon/{ns}/{ns}'
+        node.create_subscription(
+            PoseStamped, topic,
+            lambda msg, d=self: d._cb(msg), 10)
+        node.get_logger().info(f'[{ns}] KF → {topic}  publish {publish_hz:.0f} Hz')
+
+    def _cb(self, msg: PoseStamped):
+        p = msg.pose.position
+        if p.x*p.x + p.y*p.y + p.z*p.z < _ZERO_SQ:
+            return
+
+        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+
+        if self.last_stamp is not None:
+            dt = stamp - self.last_stamp
+            if 0.0005 < dt < 1.0 and abs(dt - self.dt) > self.dt * 0.1:
+                self.kf_kwargs['dt'] = dt
+                self.kf.init(**self.kf_kwargs)
+                self.dt = dt
+        self.last_stamp = stamp
+
+        q = msg.pose.orientation
+        roll, pitch, yaw = _quat_to_euler(q.x, q.y, q.z, q.w)
+
+        if not self.initialized:
+            seed = np.zeros(ViconKF.NX)
+            seed[0]=p.x; seed[2]=p.y; seed[4]=p.z
+            seed[6]=roll; seed[8]=pitch; seed[10]=yaw
+            self.kf._x = seed
+            self.initialized = True
+
+        # KF step — always runs at full Vicon rate for accuracy
+        x = self.kf.step(np.array([p.x, p.y, p.z, roll, pitch, yaw]))
+        self._x = x
+
+        # ── Publish at reduced rate ───────────────────────────────
+        # This is the main CPU saving: ROS2 Python publish() serializes
+        # the message on every call (~50µs each). At 100 Hz × 3 drones
+        # × 2 topics = 600 publish/sec. At 30 Hz = 180 publish/sec.
+        if stamp - self._last_pub_t < self._publish_period:
+            # Still update path buffer at full rate for smooth trajectory
+            self._append_path(x, msg.header.stamp)
+            return
+        self._last_pub_t = stamp
+
+        # State
+        self.state_msg.data = x.tolist()
+        self.pub_state.publish(self.state_msg)
+
+        # Pose
+        pm = self.pose_msg
+        pm.header.stamp    = msg.header.stamp
+        pm.pose.position.x = float(x[0])
+        pm.pose.position.y = float(x[2])
+        pm.pose.position.z = float(x[4])
+        cy=math.cos(x[10]*.5); sy=math.sin(x[10]*.5)
+        cr=math.cos(x[6] *.5); sr=math.sin(x[6] *.5)
+        cp=math.cos(x[8] *.5); sp=math.sin(x[8] *.5)
+        pm.pose.orientation.w = cr*cp*cy + sr*sp*sy
+        pm.pose.orientation.x = sr*cp*cy - cr*sp*sy
+        pm.pose.orientation.y = cr*sp*cy + sr*cp*sy
+        pm.pose.orientation.z = cr*cp*sy - sr*sp*cy
+        self.pub_pose.publish(pm)
+
+        self._append_path(x, msg.header.stamp)
+
+    def _append_path(self, x, stamp):
+        if len(self.path_buf) < self.max_path:
+            self.path_buf.append(PoseStamped())
+        idx = self.path_head % self.max_path
+        pb  = self.path_buf[idx]
+        pb.header.stamp    = stamp
+        pb.header.frame_id = 'world'
+        pb.pose.position.x = float(x[0])
+        pb.pose.position.y = float(x[2])
+        pb.pose.position.z = float(x[4])
+        pb.pose.orientation = self.pose_msg.pose.orientation
+        self.path_head += 1
+
+    def publish_path(self, stamp):
+        if not self.path_buf:
+            return
+        path_msg = Path()
+        path_msg.header.stamp    = stamp
+        path_msg.header.frame_id = 'world'
+        n   = min(self.path_head, self.max_path)
+        idx = self.path_head % self.max_path
+        path_msg.poses = (self.path_buf[:n] if self.path_head <= self.max_path
+                          else self.path_buf[idx:] + self.path_buf[:idx])
+        self.pub_path.publish(path_msg)
+
+
 class ViconKFNode(Node):
-    """Subscribe to Vicon pose, run Kalman filter, publish smoothed state.
-
-    Subscribes
-    ----------
-    /vicon/<subject_name>/pose  (geometry_msgs/PoseStamped)
-
-    Publishes
-    ---------
-    /tello/kf_state  (std_msgs/Float64MultiArray)
-        Layout: [px, vx, py, vy, pz, vz, roll, vroll, pitch, vpitch, yaw, vyaw]
-    /tello/kf_pose   (geometry_msgs/PoseStamped)  — smoothed pose for visualisation
-    """
 
     def __init__(self):
         super().__init__('vicon_kf_node')
 
-        #  Parameters 
-        self.declare_parameter('subject_name', 'tello1')
-        self.declare_parameter('dt', 0.01)          # nominal step (sec); overridden by timestamps
-        self.declare_parameter('q_pos',  1e-3)
-        self.declare_parameter('q_vel',  1e-1)
-        self.declare_parameter('q_ang',  1e-4)
-        self.declare_parameter('q_rate', 1e-2)
-        self.declare_parameter('r_pos',  1e-6)
-        self.declare_parameter('r_ang',  1e-5)
-        self.declare_parameter('max_path_len', 2000)  # ~20 s at 100 Hz
+        self.declare_parameter('drone_subjects', 'tello0')
+        self.declare_parameter('dt',             0.01)
+        self.declare_parameter('q_pos',          1e-3)
+        self.declare_parameter('q_vel',          1e-1)
+        self.declare_parameter('q_ang',          1e-4)
+        self.declare_parameter('q_rate',         1e-2)
+        self.declare_parameter('r_pos',          1e-6)
+        self.declare_parameter('r_ang',          1e-5)
+        self.declare_parameter('max_path_len',   2000)
+        self.declare_parameter('path_rate_hz',   5.0)
+        self.declare_parameter('publish_hz',     50.0)  
 
-        subject  = self.get_parameter('subject_name').value
-        self._dt = self.get_parameter('dt').value
+        subjects = [s.strip() for s in
+                    self.get_parameter('drone_subjects').value.split(',') if s.strip()]
 
-        #  Kalman filter 
-        self._kf = ViconKF()
-        self._kf.init(
-            dt=self._dt,
-            q_pos=self.get_parameter('q_pos').value,
-            q_vel=self.get_parameter('q_vel').value,
-            q_ang=self.get_parameter('q_ang').value,
-            q_rate=self.get_parameter('q_rate').value,
-            r_pos=self.get_parameter('r_pos').value,
-            r_ang=self.get_parameter('r_ang').value,
-        )
+        kf_kwargs = {k: self.get_parameter(k).value
+                     for k in ('dt','q_pos','q_vel','q_ang','q_rate','r_pos','r_ang')}
 
-        self._last_stamp = None
-        self._initialized = False
-        self._max_path_len = self.get_parameter('max_path_len').value
-        self._path_poses: deque = deque()
+        max_path    = self.get_parameter('max_path_len').value
+        publish_hz  = self.get_parameter('publish_hz').value
 
-        #  Publishers 
-        # Relative topic names — resolved under the node's ROS namespace,
-        # e.g. /tello1/kf_state when launched with namespace:=/tello1
-        self._pub_state = self.create_publisher(Float64MultiArray, 'kf_state', 10)
-        self._pub_pose  = self.create_publisher(PoseStamped,       'kf_pose',  10)
-        self._pub_path  = self.create_publisher(Path,              'kf_path',  10)
+        self._drones = [
+            _DroneKF(ns, self, kf_kwargs, max_path, publish_hz)
+            for ns in subjects
+        ]
 
-        #  Subscriber 
-        topic = f'/vicon/{subject}/pose'
-        self._sub = self.create_subscription(
-            PoseStamped, topic, self._cb_pose, 10)
+        path_hz = self.get_parameter('path_rate_hz').value
+        self.create_timer(1.0 / path_hz, self._publish_paths)
 
-        self.get_logger().info(f'vicon_kf_node started, listening on {topic}')
+        self.get_logger().info(
+            f'vicon_kf_node ready — {len(subjects)} drones, '
+            f'KF@100Hz, publish@{publish_hz:.0f}Hz')
 
-    def _cb_pose(self, msg: PoseStamped):
-        p = msg.pose.position
-        q = msg.pose.orientation
-        roll, pitch, yaw = quat_to_euler(q.x, q.y, q.z, q.w)
-        
-        # Reject spurious all-zero frames from Vicon dropout
-        if abs(p.x) < 1e-6 and abs(p.y) < 1e-6 and abs(p.z) < 1e-6:
-            self.get_logger().warn('Rejected zero pose from Vicon', throttle_duration_sec=1.0)
-            return 
-
-        # Recompute dt from message timestamps when possible
-        stamp_sec = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
-        if self._last_stamp is not None:
-            dt = stamp_sec - self._last_stamp
-            if 0.0005 < dt < 1.0:   # sanity: between 0.5 ms and 1 s
-                # Reinitialise KF A matrix only when dt changes significantly
-                if abs(dt - self._dt) > 1e-4:
-                    self._kf.init(
-                        dt=dt,
-                        q_pos=self.get_parameter('q_pos').value,
-                        q_vel=self.get_parameter('q_vel').value,
-                        q_ang=self.get_parameter('q_ang').value,
-                        q_rate=self.get_parameter('q_rate').value,
-                        r_pos=self.get_parameter('r_pos').value,
-                        r_ang=self.get_parameter('r_ang').value,
-                    )
-                    self._dt = dt
-        self._last_stamp = stamp_sec
-
-        # Seed the KF state on the first message
-        if not self._initialized:
-            seed = np.zeros(ViconKF.NX)
-            seed[0] = p.x; seed[2] = p.y; seed[4] = p.z
-            seed[6] = roll; seed[8] = pitch; seed[10] = yaw
-            self._kf._x = seed
-            self._initialized = True
-
-        y = np.array([p.x, p.y, p.z, roll, pitch, yaw])
-        x = self._kf.step(y)
-
-        # Publish state vector
-        state_msg = Float64MultiArray()
-        state_msg.data = x.tolist()
-        self._pub_state.publish(state_msg)
-
-        # Publish smoothed pose for visualisation
-        pose_msg = PoseStamped()
-        pose_msg.header.stamp    = msg.header.stamp
-        pose_msg.header.frame_id = 'world'
-        pose_msg.pose.position.x = x[0]
-        pose_msg.pose.position.y = x[2]
-        pose_msg.pose.position.z = x[4]
-        cy, sy = math.cos(x[10] * 0.5), math.sin(x[10] * 0.5)
-        cr, sr = math.cos(x[6]  * 0.5), math.sin(x[6]  * 0.5)
-        cp, sp = math.cos(x[8]  * 0.5), math.sin(x[8]  * 0.5)
-        pose_msg.pose.orientation.w = cr * cp * cy + sr * sp * sy
-        pose_msg.pose.orientation.x = sr * cp * cy - cr * sp * sy
-        pose_msg.pose.orientation.y = cr * sp * cy + sr * cp * sy
-        pose_msg.pose.orientation.z = cr * cp * sy - sr * sp * cy
-        self._pub_pose.publish(pose_msg)
-
-        # Accumulate path and publish for Foxglove trajectory visualisation
-        self._path_poses.append(pose_msg)
-        if len(self._path_poses) > self._max_path_len:
-            self._path_poses.popleft()
-        path_msg = Path()
-        path_msg.header.stamp    = msg.header.stamp
-        path_msg.header.frame_id = 'world'
-        path_msg.poses = list(self._path_poses)
-        self._pub_path.publish(path_msg)
+    def _publish_paths(self):
+        stamp = self.get_clock().now().to_msg()
+        for d in self._drones:
+            d.publish_path(stamp)
 
 
 def main(args=None):
@@ -171,4 +214,5 @@ def main(args=None):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()

@@ -4,10 +4,10 @@ import threading
 import numpy as np
 from djitellopy import Tello
 
-from stream     import LatestFrame
-from detector   import ArucoDetector
-from controller import RCController
-from hud        import HUD
+from arucos.test_aruco.stream     import LatestFrame
+from arucos.test_aruco.detector   import ArucoDetector
+from arucos.test_aruco.controller import RCController
+from arucos.test_aruco.hud        import HUD
 
 LOST_TIMEOUT = 0.5
 

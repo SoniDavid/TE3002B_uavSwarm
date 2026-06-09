@@ -14,6 +14,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.egg-info/
+.venv
 
 # Test caches
 .pytest_cache/
@@ -23,7 +24,9 @@ htmlcov/
 # IDE / editor
 .vscode/
 .idea/
-.history
+.history/
+.main/
+.devcontainer/
 
 # OS files
 .DS_Store

@@ -162,7 +162,7 @@ class FormationControllerNode(Node):
         self.declare_parameter("s2_ns",           "tello2")
         self.declare_parameter("aruco_topic",     "/aruco/pose")
         self.declare_parameter("aruco_timeout_s", 0.5)
-        self.declare_parameter("rate_hz",         20.0)
+        self.declare_parameter("rate_hz",         50.0)
 
         formation_key = self.get_parameter("formation").value.upper()
         if formation_key not in FORMATIONS:

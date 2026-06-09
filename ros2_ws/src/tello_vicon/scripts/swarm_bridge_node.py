@@ -30,13 +30,14 @@ Global published
 """
 
 import logging
+import cv2
 import signal
 import threading
 import time
 
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import CompressedImage, Image
 from std_msgs.msg import Bool, Float32, Int32MultiArray
 
 try:
@@ -61,6 +62,7 @@ class SwarmBridgeNode(Node):
         self.declare_parameter('leader_ns',      'tello0')
         self.declare_parameter('mock',           False)
         self.declare_parameter('image_rate',     20.0)
+        self.declare_parameter('jpeg_quality',   80)
 
         subjects   = [s.strip() for s in
                       self.get_parameter('drone_subjects').value.split(',') if s.strip()]
@@ -68,7 +70,8 @@ class SwarmBridgeNode(Node):
                       self.get_parameter('drone_ips').value.split(',')      if ip.strip()]
         leader_ns  = self.get_parameter('leader_ns').value
         self._mock = self.get_parameter('mock').value
-        img_rate   = self.get_parameter('image_rate').value
+        img_rate       = self.get_parameter('image_rate').value
+        self._jpeg_q   = int(self.get_parameter('jpeg_quality').value)
 
         if len(subjects) != len(ips):
             raise ValueError(
@@ -99,7 +102,7 @@ class SwarmBridgeNode(Node):
             self._pub_bat[ns] = self.create_publisher(
                 Float32, f'/{ns}/battery', 10)
             self._pub_image[ns] = self.create_publisher(
-                Image, f'/{ns}/image_raw', 10)
+                CompressedImage, f'/{ns}/image_raw/compressed', 10)
 
             self.create_subscription(
                 Int32MultiArray, f'/{ns}/rc_cmd',
@@ -227,19 +230,24 @@ class SwarmBridgeNode(Node):
     # ── Image ─────────────────────────────────────────────────────
 
     def _publish_frames(self):
+        stamp = self.get_clock().now().to_msg()
         for ns, fr in self._frame_reads.items():
             frame = fr.frame
             if frame is None:
                 continue
-            h, w = frame.shape[:2]
-            msg = Image()
-            msg.header.stamp    = self.get_clock().now().to_msg()
+            # CompressedImage (JPEG) — ~11 KB vs ~2 MB for raw bgr8.
+            # DDS serializes the full payload; 186x smaller = ~186x less
+            # serialization time → fixes the 170ms publish latency.
+            ok, buf = cv2.imencode(
+                '.jpg', frame,
+                [cv2.IMWRITE_JPEG_QUALITY, self._jpeg_q])
+            if not ok:
+                continue
+            msg = CompressedImage()
+            msg.header.stamp    = stamp
             msg.header.frame_id = 'camera'
-            msg.height   = h
-            msg.width    = w
-            msg.encoding = 'bgr8'
-            msg.step     = w * 3
-            msg.data     = frame.tobytes()
+            msg.format          = 'jpeg'
+            msg.data            = buf.tobytes()
             self._pub_image[ns].publish(msg)
 
     # ── Battery ───────────────────────────────────────────────────

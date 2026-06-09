@@ -15,7 +15,7 @@ def fly_square(tello: Tello, side_cm: int) -> None:
 
 
 if __name__ == "__main__":
-	tello = Tello(host='192.168.0.100')
+	tello = Tello(host='192.168.0.103')
 	is_airborne = False
 
 	try:

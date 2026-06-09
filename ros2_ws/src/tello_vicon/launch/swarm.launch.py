@@ -40,27 +40,34 @@ def _spawn_all(context, params, mock, formation, cam_params, record_mode, output
     subjects = [parts[i]     for i in range(0, len(parts), 2)]
     ips      = [parts[i + 1] for i in range(0, len(parts), 2)]
 
-    # ── Per-drone KF + controller stack ─────────────────────────────
-    for subject in subjects:
-        common = dict(package='tello_vicon', output='screen', namespace=subject)
+    # ── ONE vicon_kf_node for ALL drones (one process) ──────────────
+    # Remaps each drone's Vicon topic to what vicon_kf_node expects:
+    #   /vicon/<subject>/<subject>  →  /vicon/<subject>/pose
+    vicon_remaps = [
+        (f'/vicon/{s}/pose', f'/vicon/{s}/{s}')
+        for s in subjects
+    ]
+    actions.append(Node(
+        package='tello_vicon',
+        executable='vicon_kf_node',
+        name='vicon_kf_node',
+        output='screen',
+        parameters=[params, {
+            'drone_subjects': ','.join(subjects),
+        }],
+        remappings=vicon_remaps,
+    ))
 
-        actions.append(Node(
-            **common,
-            executable='vicon_kf_node',
-            name='vicon_kf_node',
-            parameters=[params, {'subject_name': subject}],
-            remappings=[
-                # Vicon driver publishes /vicon/<subject>/<subject>
-                # vicon_kf_node expects  /vicon/<subject>/pose
-                (f'/vicon/{subject}/pose', f'/vicon/{subject}/{subject}'),
-            ],
-        ))
-        actions.append(Node(
-            **common,
-            executable='tello_controller',
-            name='tello_controller',
-            parameters=[params],
-        ))
+    # ── ONE tello_controller for ALL drones (one process) ────────────
+    actions.append(Node(
+        package='tello_vicon',
+        executable='tello_controller',
+        name='tello_controller',
+        output='screen',
+        parameters=[params, {
+            'drone_subjects': ','.join(subjects),
+        }],
+    ))
 
     # ── Single swarm_bridge for ALL drones (one process = one UDP socket) ──
     actions.append(Node(
@@ -77,7 +84,7 @@ def _spawn_all(context, params, mock, formation, cam_params, record_mode, output
     ))
 
     # ── ArUco node — leader namespace only ───────────────────────────
-    # Subscribes to /<leader_ns>/image_raw and /<leader_ns>/kf_state.
+    # Subscribes to /<leader_ns>/image_raw/compressed and /<leader_ns>/kf_state.
     # Publishes /aruco/pose (world frame) for formation_controller.
     actions.append(Node(
         package='tello_vicon',
@@ -87,7 +94,7 @@ def _spawn_all(context, params, mock, formation, cam_params, record_mode, output
         output='screen',
         parameters=[params, {
             'camera_params_file': cam_params,
-            'image_topic':        'image_raw',
+            'image_topic':        'image_raw/compressed',
         }],
     ))
 
@@ -140,7 +147,7 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument(
             'drones',
-            default_value='tello_soni1:192.168.0.100:tello_soni2:192.168.0.102:tello_soni3:192.168.0.101',
+            default_value='tello_soni1:192.168.0.100:tello_soni2:192.168.0.104:tello_soni3:192.168.0.102',
             description='Colon-separated subject:ip pairs; first = leader',
         ),
         DeclareLaunchArgument(
