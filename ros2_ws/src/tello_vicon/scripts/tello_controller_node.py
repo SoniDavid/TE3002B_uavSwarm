@@ -1,316 +1,202 @@
-"""Formation controller node — leader + two followers (S1, S2).
+"""tello_controller_node.py — ONE node, all drones, one process.
 
-Architecture
-------------
-This node sits *above* the per-drone tello_controller nodes.
-It does NOT control drones directly; it publishes ``/telloN/reference``
-(geometry_msgs/PoseStamped) for each drone's existing PD controller to track.
-
-                 ┌─────────────────────────────────────┐
-                 │   formation_controller_node          │
-                 │                                      │
-  /tello0/kf_state ──► leader pose                     │
-  /tello1/kf_state ──► s1 pose     ──► offset math ──► │ ──► /tello0/reference
-  /tello2/kf_state ──► s2 pose                         │ ──► /tello1/reference
-  /aruco/pose      ──► aruco pose  ──► leader ref  ──► │ ──► /tello2/reference
-                 └─────────────────────────────────────┘
-
-Formations  (offsets in the leader's body frame, metres)
----------
-  V              -> classic V (S1 right-back, S2 left-back)
-  LINE           -> side-by-side line
-  COLUMN         -> single file with altitude step
-  PANORAMIC      -> side-by-side with yaw spread
-  RECONSTRUCTION -> triangular with inward yaw for 3-D reconstruction
+Manages one PD controller per drone in a single process, eliminating
+two Python interpreters and two rclpy event loops compared to running
+three separate tello_controller processes.
 
 Parameters
 ----------
-  formation       : str   -> active formation key (default "V")
-  leader_ns       : str   -> ROS namespace of the leader drone (default "tello0")
-  s1_ns           : str   -> namespace of follower 1               (default "tello1")
-  s2_ns           : str   -> namespace of follower 2               (default "tello2")
-  aruco_topic     : str   -> topic where ArUco pose arrives
-  aruco_timeout_s : float -> zero leader vel if no ArUco for this long (default 0.5)
-  rate_hz         : float -> reference publish rate (default 20.0)
+  drone_subjects  str    comma-separated namespace list  (default "tello0")
+  Kp_xy / Kp_z / Kp_yaw / Kd_xy / Kd_z  — PD gains
+  v_max_xy / v_max_z / yaw_max           — velocity limits
+  rate_hz         float  control loop rate  (default 30.0)
+  timeout_s       float  zero RC if no state for this long (default 0.5)
 
-Topics published
-----------------
-  /<leader_ns>/reference   (PoseStamped)
-  /<s1_ns>/reference       (PoseStamped)
-  /<s2_ns>/reference       (PoseStamped)
-
-Topics subscribed
------------------
-  /<leader_ns>/kf_state    (Float64MultiArray)  [px,vx,py,vy,pz,vz,...,yaw,vyaw]
-  /<s1_ns>/kf_state        (Float64MultiArray)
-  /<s2_ns>/kf_state        (Float64MultiArray)
-  <aruco_topic>            (PoseStamped)
-  /swarm/ready             (Bool)               published by swarm_bridge when all
-                                                drones are airborne
+Topics per drone (absolute)
+---------------------------
+  Subscribes: /<ns>/kf_state   (Float64MultiArray)
+              /<ns>/reference  (PoseStamped)
+  Publishes:  /<ns>/rc_cmd     (Int32MultiArray)  [lr, fb, ud, yaw]
 """
 
 import math
+import time
 
 import numpy as np
 import rclpy
 from geometry_msgs.msg import PoseStamped
 from rclpy.node import Node
-from rclpy.time import Time
-from std_msgs.msg import Float64MultiArray
+from std_msgs.msg import Float64MultiArray, Int32MultiArray
 
-# ─────────────────────────────────────────────────────────────────
-# Formation table  (offsets in leader body frame, metres & degrees)
-# ─────────────────────────────────────────────────────────────────
-# Each entry: {"dx": forward, "dy": left, "dz": up, "dyaw": deg}
-FORMATIONS: dict[str, dict[str, dict]] = {
-    "V": {
-        "S1": {"dx": -0.50, "dy":  1.00, "dz": 0.0, "dyaw": 0.0},
-        "S2": {"dx": -0.50, "dy": -1.00, "dz": 0.0, "dyaw": 0.0},
-    },
-    "LINE": {
-        "S1": {"dx":  0.0,  "dy":  1.00, "dz": 0.0, "dyaw": 0.0},
-        "S2": {"dx":  0.0,  "dy": -1.00, "dz": 0.0, "dyaw": 0.0},
-    },
-    "COLUMN": {
-        "S1": {"dx": -0.60, "dy":  0.0,  "dz":  0.20, "dyaw": 0.0},
-        "S2": {"dx": -1.20, "dy":  0.0,  "dz":  0.40, "dyaw": 0.0},
-    },
-    "PANORAMIC": {
-        "S1": {"dx":  0.0,  "dy":  0.80, "dz": 0.0, "dyaw":  45.0},
-        "S2": {"dx":  0.0,  "dy": -0.80, "dz": 0.0, "dyaw": -45.0},
-    },
-    "RECONSTRUCTION": {
-        "S1": {"dx": -0.40, "dy":  0.70, "dz":  0.20, "dyaw": -30.0},
-        "S2": {"dx": -0.40, "dy": -0.70, "dz":  0.20, "dyaw":  30.0},
-    },
-}
+# State vector indices
+_PX, _VX = 0, 1
+_PY, _VY = 2, 3
+_PZ, _VZ = 4, 5
+_YAW     = 10
 
-# KF state vector indices (matches vicon_kf_node.py output)
-IDX_PX, IDX_VX = 0, 1
-IDX_PY, IDX_VY = 2, 3
-IDX_PZ, IDX_VZ = 4, 5
-IDX_YAW        = 10
+_TWO_PI = 2.0 * math.pi
 
-
-# ─────────────────────────────────────────────────────────────────
-# Helpers
-# ─────────────────────────────────────────────────────────────────
 
 def _angle_diff(target: float, current: float) -> float:
-    """Shortest-path signed angular difference (radians)."""
-    d = target - current
-    while d >  math.pi: d -= 2 * math.pi
-    while d < -math.pi: d += 2 * math.pi
+    d = (target - current) % _TWO_PI
+    if d > math.pi:
+        d -= _TWO_PI
     return d
 
 
-def _yaw_to_quat(yaw: float):
-    """Return (x, y, z, w) quaternion for a pure yaw rotation."""
-    cy, sy = math.cos(yaw * 0.5), math.sin(yaw * 0.5)
-    return 0.0, 0.0, sy, cy
+class _DronePD:
+    """Per-drone PD controller state."""
 
+    def __init__(self, ns: str, node: Node, gains: dict,
+                 rate_hz: float, timeout: float):
+        self.ns      = ns
+        self.gains   = gains
+        self.timeout = timeout
 
-def _make_reference(x: float, y: float, z: float, yaw: float,
-                    frame_id: str = "world") -> PoseStamped:
-    """Build a PoseStamped from world-frame position + yaw."""
-    msg = PoseStamped()
-    msg.header.frame_id = frame_id
-    msg.pose.position.x = float(x)
-    msg.pose.position.y = float(y)
-    msg.pose.position.z = float(z)
-    qx, qy, qz, qw = _yaw_to_quat(yaw)
-    msg.pose.orientation.x = qx
-    msg.pose.orientation.y = qy
-    msg.pose.orientation.z = qz
-    msg.pose.orientation.w = qw
-    return msg
+        self._kf_state: np.ndarray | None = None
+        self._ref_pos  = np.zeros(3)
+        self._ref_yaw  = 0.0
+        self._last_t   = 0.0
+        self._ref_recv = False
 
+        # Pre-allocated RC message
+        self._rc_msg      = Int32MultiArray()
+        self._rc_msg.data = [0, 0, 0, 0]
 
-def _body_offset_to_world(leader_pos: np.ndarray, leader_yaw: float,
-                           offset: dict) -> tuple[float, float, float, float]:
-    """
-    Convert a body-frame offset (dx forward, dy left, dz up) to a world-frame
-    target position and absolute yaw for a follower.
+        self._pub_rc = node.create_publisher(Int32MultiArray, f'/{ns}/rc_cmd', 10)
 
-    Returns (x_w, y_w, z_w, yaw_w).
-    """
-    cy, sy = math.cos(leader_yaw), math.sin(leader_yaw)
-    dx_w = offset["dx"] * cy - offset["dy"] * sy
-    dy_w = offset["dx"] * sy + offset["dy"] * cy
+        node.create_subscription(
+            Float64MultiArray, f'/{ns}/kf_state',
+            lambda msg, d=self: _DronePD._cb_state(d, msg), 10)
+        node.create_subscription(
+            PoseStamped, f'/{ns}/reference',
+            lambda msg, d=self: _DronePD._cb_ref(d, msg), 10)
 
-    x_w = leader_pos[0] + dx_w
-    y_w = leader_pos[1] + dy_w
-    z_w = leader_pos[2] + offset["dz"]
-
-    yaw_w = leader_yaw + math.radians(offset["dyaw"])
-    return x_w, y_w, z_w, yaw_w
-
-
-# ─────────────────────────────────────────────────────────────────
-# Node
-# ─────────────────────────────────────────────────────────────────
-
-class FormationControllerNode(Node):
-
-    def __init__(self):
-        super().__init__("formation_controller")
-
-        # ── Parameters ───────────────────────────────────────────
-        self.declare_parameter("formation",       "V")
-        self.declare_parameter("leader_ns",       "tello0")
-        self.declare_parameter("s1_ns",           "tello1")
-        self.declare_parameter("s2_ns",           "tello2")
-        self.declare_parameter("aruco_topic",     "/aruco/pose")
-        self.declare_parameter("aruco_timeout_s", 0.5)
-        self.declare_parameter("rate_hz",         20.0)
-
-        formation_key = self.get_parameter("formation").value.upper()
-        if formation_key not in FORMATIONS:
-            self.get_logger().warn(
-                f"Unknown formation '{formation_key}', falling back to 'V'.")
-            formation_key = "V"
-        self._formation = FORMATIONS[formation_key]
-        self.get_logger().info(f"Active formation: {formation_key}")
-
-        ns_leader = self.get_parameter("leader_ns").value
-        ns_s1     = self.get_parameter("s1_ns").value
-        ns_s2     = self.get_parameter("s2_ns").value
-        aruco_top = self.get_parameter("aruco_topic").value
-        self._aruco_timeout = self.get_parameter("aruco_timeout_s").value
-
-        # ── State ─────────────────────────────────────────────────
-        self._state: dict[str, np.ndarray | None] = {
-            "leader": None, "s1": None, "s2": None
-        }
-
-        # ArUco: initialise last_t to NOW so aruco_fresh starts False
-        # correctly instead of being True at t=0 (unix epoch bug)
-        self._aruco_pos      = np.zeros(3)
-        self._aruco_yaw      = 0.0
-        self._aruco_last_t   = self.get_clock().now().nanoseconds * 1e-9
-        self._aruco_received = False   # True only after first real detection
-
-        # Ready gate: do not publish references until swarm_bridge
-        # confirms every drone is airborne via /swarm/ready.
-        # Can also be set manually:
-        #   ros2 topic pub /swarm/ready std_msgs/Bool "data: true" --once
-
-
-        # ── Subscribers ───────────────────────────────────────────
-        def _make_kf_sub(ns: str, key: str):
-            return self.create_subscription(
-                Float64MultiArray,
-                f"/{ns}/kf_state",
-                lambda msg, k=key: self._cb_kf(msg, k),
-                10,
-            )
-
-        _make_kf_sub(ns_leader, "leader")
-        _make_kf_sub(ns_s1, "s1")
-        _make_kf_sub(ns_s2, "s2")
-
-        self.create_subscription(PoseStamped, aruco_top, self._cb_aruco, 10)
-
-        # ── Publishers ────────────────────────────────────────────
-        self._pub_leader = self.create_publisher(
-            PoseStamped, f"/{ns_leader}/reference", 10)
-        self._pub_s1 = self.create_publisher(
-            PoseStamped, f"/{ns_s1}/reference", 10)
-        self._pub_s2 = self.create_publisher(
-            PoseStamped, f"/{ns_s2}/reference", 10)
-
-        # ── Timer ─────────────────────────────────────────────────
-        dt = 1.0 / self.get_parameter("rate_hz").value
-        self.create_timer(dt, self._tick)
-
-        self.get_logger().info("formation_controller started")
-
-    # ── Callbacks ─────────────────────────────────────────────────
-
-    def _cb_kf(self, msg: Float64MultiArray, key: str):
+    def _cb_state(self, msg: Float64MultiArray):
         if len(msg.data) >= 12:
-            self._state[key] = np.array(msg.data)
+            self._kf_state = np.asarray(msg.data)
+            self._last_t   = time.monotonic()
 
-
-    def _cb_aruco(self, msg: PoseStamped):
-        """Store the latest ArUco pose (world frame)."""
-        self._aruco_pos[0] = msg.pose.position.x
-        self._aruco_pos[1] = msg.pose.position.y
-        self._aruco_pos[2] = msg.pose.position.z
+    def _cb_ref(self, msg: PoseStamped):
+        self._ref_pos[0] = msg.pose.position.x
+        self._ref_pos[1] = msg.pose.position.y
+        self._ref_pos[2] = msg.pose.position.z
         q = msg.pose.orientation
-        self._aruco_yaw = math.atan2(
+        self._ref_yaw = math.atan2(
             2.0 * (q.w * q.z + q.x * q.y),
-            1.0 - 2.0 * (q.y * q.y + q.z * q.z),
-        )
-        self._aruco_last_t   = self.get_clock().now().nanoseconds * 1e-9
-        self._aruco_received = True
+            1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+        self._ref_recv = True
 
-    # ── Main tick ─────────────────────────────────────────────────
+    def tick(self):
+        DEADBAND_XY = 0.10  # 10 centímetros
+        DEADBAND_Z  = 0.10  # 10 centímetros
+        DEADBAND_YAW = math.radians(10.0) # 10 grados
+        
+        g = self.gains
 
-    def _tick(self):
-        # Single guard — wait until leader KF state is available.
-        ldr = self._state["leader"]
-        if ldr is None:
-            self.get_logger().warn(
-                'Waiting for leader kf_state — check Vicon remap',
-                throttle_duration_sec=2.0)
+        if not self._ref_recv or self._kf_state is None or \
+                (time.monotonic() - self._last_t) > self.timeout:
+            self._rc_msg.data = [0, 0, 0, 0]
+            self._pub_rc.publish(self._rc_msg)
             return
 
-        now = self.get_clock().now().nanoseconds * 1e-9
+        x   = self._kf_state
+        pos = x[[_PX, _PY, _PZ]]
+        vel = x[[_VX, _VY, _VZ]]
+        yaw = x[_YAW]
+        
+        e_pos_full = self._ref_pos - pos
+        e_yaw_raw  = _angle_diff(self._ref_yaw, yaw)
+        
+        e_pos = np.array([
+            e_pos_full[0] if abs(e_pos_full[0]) > DEADBAND_XY else 0.0,
+            e_pos_full[1] if abs(e_pos_full[1]) > DEADBAND_XY else 0.0,
+            e_pos_full[2] if abs(e_pos_full[2]) > DEADBAND_Z  else 0.0
+        ])
+        
+        yaw_error = e_yaw_raw if abs(e_yaw_raw) > DEADBAND_YAW else 0.0
 
-        # ── 1. Leader reference ───────────────────────────────────
-        # The leader receives NO reference until ArUco is detected for
-        # the first time. Before detection the leader hovers freely
-        # under the Tello's own internal stabilization — the controller
-        # stays in RC=0 (timeout/no-ref mode). Once ArUco is detected,
-        # the leader tracks the marker. If ArUco is lost after being
-        # seen, the leader holds its last Vicon position.
-        aruco_fresh = (self._aruco_received and
-                       (now - self._aruco_last_t) < self._aruco_timeout)
+        e_pos = np.clip(e_pos, -0.5, 0.5)
+        e_vel = -vel
 
-        if not self._aruco_received:
-            # ArUco never seen yet — do NOT publish leader reference.
-            # tello_controller stays in RC=0 (hover) for the leader.
-            # Still publish follower references so they can form up
-            # relative to the leader's current real position.
-            self.get_logger().info(
-                'Leader waiting for ArUco detection — hovering freely',
-                throttle_duration_sec=3.0)
-        elif aruco_fresh:
-            leader_ref = _make_reference(
-                self._aruco_pos[0],
-                self._aruco_pos[1],
-                self._aruco_pos[2],
-                self._aruco_yaw,
-            )
-            leader_ref.header.stamp = self.get_clock().now().to_msg()
-            self._pub_leader.publish(leader_ref)
-        else:
-            # ArUco was seen before but is now lost — hold last Vicon position
-            leader_ref = _make_reference(
-                ldr[IDX_PX], ldr[IDX_PY], ldr[IDX_PZ], ldr[IDX_YAW])
-            leader_ref.header.stamp = self.get_clock().now().to_msg()
-            self._pub_leader.publish(leader_ref)
+        # XY world-frame velocity command
+        vxy = g['Kp_xy'] * e_pos[:2] + g['Kd_xy'] * e_vel[:2]
+        n   = math.hypot(vxy[0], vxy[1])
+        if n > g['v_max_xy']:
+            vxy *= g['v_max_xy'] / n
 
-        # ── 2. Followers: offset from leader's real position ──────
-        leader_pos = np.array([ldr[IDX_PX], ldr[IDX_PY], ldr[IDX_PZ]])
-        leader_yaw = ldr[IDX_YAW]
-        now_msg    = self.get_clock().now().to_msg()
+        # Z command
+        vz = float(np.clip(
+            g['Kp_z'] * e_pos[2] + g['Kd_z'] * e_vel[2],
+            -g['v_max_z'], g['v_max_z']))
 
-        for pub, key in ((self._pub_s1, "S1"), (self._pub_s2, "S2")):
-            offset = self._formation[key]
-            xw, yw, zw, yaw_w = _body_offset_to_world(
-                leader_pos, leader_yaw, offset)
-            ref = _make_reference(xw, yw, zw, yaw_w)
-            ref.header.stamp = now_msg
-            pub.publish(ref)
+        # Rotate XY to body frame
+        cy, sy  = math.cos(yaw), math.sin(yaw)
+        v_fwd   =  vxy[0] * cy + vxy[1] * sy
+        v_left  = -vxy[0] * sy + vxy[1] * cy
+
+        # Yaw PD
+        yaw_cmd = float(np.clip(
+            g['Kp_yaw'] * yaw_error,
+            -g['yaw_max'], g['yaw_max']))
+
+        scale_xy  = 100.0 / g['v_max_xy']
+        scale_z   = 100.0 / g['v_max_z']
+        scale_yaw = 100.0 / g['yaw_max']
+
+        self._rc_msg.data = [
+            int(np.clip(-v_left  * scale_xy,  -30, 30)),
+            int(np.clip( v_fwd   * scale_xy,  -30, 30)),
+            int(np.clip( vz      * scale_z,   -50, 50)),
+            int(np.clip( yaw_cmd * scale_yaw, -30, 30)),
+        ]
+        self._pub_rc.publish(self._rc_msg)
 
 
-# ─────────────────────────────────────────────────────────────────
+class TelloControllerNode(Node):
+
+    def __init__(self):
+        super().__init__('tello_controller')
+
+        self.declare_parameter('drone_subjects', 'tello0')
+        self.declare_parameter('Kp_xy',    0.5)
+        self.declare_parameter('Kp_z',     0.6)
+        self.declare_parameter('Kp_yaw',   0.4)
+        self.declare_parameter('Kd_xy',    0.2)
+        self.declare_parameter('Kd_z',     0.2)
+        self.declare_parameter('v_max_xy', 0.5)
+        self.declare_parameter('v_max_z',  0.3)
+        self.declare_parameter('yaw_max',  30.0)
+        self.declare_parameter('rate_hz',  50.0)
+        self.declare_parameter('timeout_s', 0.5)
+
+        subjects = [s.strip() for s in
+                    self.get_parameter('drone_subjects').value.split(',')
+                    if s.strip()]
+
+        gains = {k: self.get_parameter(k).value
+                 for k in ('Kp_xy','Kp_z','Kp_yaw','Kd_xy','Kd_z',
+                            'v_max_xy','v_max_z','yaw_max')}
+        rate    = self.get_parameter('rate_hz').value
+        timeout = self.get_parameter('timeout_s').value
+
+        self._drones = [
+            _DronePD(ns, self, gains, rate, timeout)
+            for ns in subjects
+        ]
+
+        self.create_timer(1.0 / rate, self._tick_all)
+        self.get_logger().info(
+            f'tello_controller ready — {len(subjects)} drone(s): {subjects}')
+
+    def _tick_all(self):
+        for d in self._drones:
+            d.tick()
+
 
 def main(args=None):
     rclpy.init(args=args)
-    node = FormationControllerNode()
+    node = TelloControllerNode()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

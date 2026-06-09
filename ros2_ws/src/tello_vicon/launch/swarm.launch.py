@@ -147,7 +147,7 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument(
             'drones',
-            default_value='tello_soni1:192.168.0.100:tello_soni2:192.168.0.104:tello_soni3:192.168.0.102',
+            default_value='tello_soni1:192.168.0.100:tello_soni2:192.168.0.101:tello_soni3:192.168.0.102',
             description='Colon-separated subject:ip pairs; first = leader',
         ),
         DeclareLaunchArgument(

@@ -64,12 +64,12 @@ from std_msgs.msg import Float64MultiArray
 # Each entry: {"dx": forward, "dy": left, "dz": up, "dyaw": deg}
 FORMATIONS: dict[str, dict[str, dict]] = {
     "V": {
-        "S1": {"dx": -0.50, "dy":  1.00, "dz": 0.0, "dyaw": 0.0},
-        "S2": {"dx": -0.50, "dy": -1.00, "dz": 0.0, "dyaw": 0.0},
+        "S1": {"dx": -0.50, "dy":  0.80, "dz": 0.0, "dyaw": 0.0},
+        "S2": {"dx": -0.50, "dy": -0.80, "dz": 0.0, "dyaw": 0.0},
     },
     "LINE": {
-        "S1": {"dx":  0.0,  "dy":  1.00, "dz": 0.0, "dyaw": 0.0},
-        "S2": {"dx":  0.0,  "dy": -1.00, "dz": 0.0, "dyaw": 0.0},
+        "S1": {"dx":  0.0,  "dy":  0.80, "dz": 0.0, "dyaw": 0.0},
+        "S2": {"dx":  0.0,  "dy": -0.80, "dz": 0.0, "dyaw": 0.0},
     },
     "COLUMN": {
         "S1": {"dx": -0.60, "dy":  0.0,  "dz":  0.20, "dyaw": 0.0},
@@ -162,7 +162,7 @@ class FormationControllerNode(Node):
         self.declare_parameter("s2_ns",           "tello2")
         self.declare_parameter("aruco_topic",     "/aruco/pose")
         self.declare_parameter("aruco_timeout_s", 0.5)
-        self.declare_parameter("rate_hz",         50.0)
+        self.declare_parameter("rate_hz",         20.0)
 
         formation_key = self.get_parameter("formation").value.upper()
         if formation_key not in FORMATIONS:
@@ -249,9 +249,6 @@ class FormationControllerNode(Node):
 
     def _tick(self):
         # Single guard — wait until leader KF state is available.
-        # This handles the startup race: _tick runs at 20 Hz but kf_state
-        # arrives at ~100 Hz, so the first few ticks may fire before
-        # the first Vicon message arrives. No external ready signal needed.
         ldr = self._state["leader"]
         if ldr is None:
             self.get_logger().warn(
@@ -262,8 +259,14 @@ class FormationControllerNode(Node):
         now = self.get_clock().now().nanoseconds * 1e-9
 
         # ── 1. Leader reference ───────────────────────────────────
-        # Use ArUco only when a real detection is fresh (within timeout).
-        # Otherwise hold current Vicon position.
+        # Leader ONLY receives a reference when ArUco is actively detected.
+        # When ArUco is not visible (never seen or lost), NO reference is
+        # published. tello_controller then times out (timeout_s) and sends
+        # RC=[0,0,0,0] — the Tello hovers freely under its own stabilization.
+        # This means:
+        #   ArUco visible   → leader actively follows the marker
+        #   ArUco not seen  → leader hovers freely, no active control
+        #   ArUco lost      → leader immediately returns to free hover
         aruco_fresh = (self._aruco_received and
                        (now - self._aruco_last_t) < self._aruco_timeout)
 
@@ -274,12 +277,14 @@ class FormationControllerNode(Node):
                 self._aruco_pos[2],
                 self._aruco_yaw,
             )
+            leader_ref.header.stamp = self.get_clock().now().to_msg()
+            self._pub_leader.publish(leader_ref)
         else:
-            leader_ref = _make_reference(
-                ldr[IDX_PX], ldr[IDX_PY], ldr[IDX_PZ], ldr[IDX_YAW])
-
-        leader_ref.header.stamp = self.get_clock().now().to_msg()
-        self._pub_leader.publish(leader_ref)
+            # No ArUco — publish nothing for the leader.
+            # The controller's timeout_s will trigger RC=[0,0,0,0].
+            self.get_logger().info(
+                'Leader: no ArUco — free hover',
+                throttle_duration_sec=3.0)
 
         # ── 2. Followers: offset from leader's real position ──────
         leader_pos = np.array([ldr[IDX_PX], ldr[IDX_PY], ldr[IDX_PZ]])
