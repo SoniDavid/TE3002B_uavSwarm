@@ -1,0 +1,72 @@
+============================================================
+  MÉTRICAS DE VUELO — ENJAMBRE UAV TE3002B
+  Trim: 5.0s inicio / 3.0s final
+  Formación: LINE
+============================================================
+
+────────────────────────────────────────────────────────────
+  Drone: tello_soni1  (LÍDER)
+────────────────────────────────────────────────────────────
+  Error RMS  XY   :   27.0 cm
+  Error RMS  Z    :   20.1 cm
+  Error RMS  3D   :   33.7 cm
+  Error MAX  XY   :  108.1 cm
+  Error MAX  Z    :   81.6 cm
+  Error MAX  3D   :  128.9 cm
+  Error P95  3D   :   57.0 cm
+  Duración eval.  : 50.9 s
+
+────────────────────────────────────────────────────────────
+  Drone: tello_soni2  (SEGUIDOR)
+────────────────────────────────────────────────────────────
+  Error RMS  XY   :   53.0 cm
+  Error RMS  Z    :   20.3 cm
+  Error RMS  3D   :   56.8 cm
+  Error MAX  XY   :  914.6 cm
+  Error MAX  Z    :  607.4 cm
+  Error MAX  3D   : 1097.9 cm
+  Error P95  3D   :   89.5 cm
+  Duración eval.  : 104.8 s
+
+────────────────────────────────────────────────────────────
+  Drone: tello_soni3  (SEGUIDOR)
+────────────────────────────────────────────────────────────
+  Error RMS  XY   :   45.4 cm
+  Error RMS  Z    :   15.9 cm
+  Error RMS  3D   :   48.2 cm
+  Error MAX  XY   :  176.7 cm
+  Error MAX  Z    :   89.2 cm
+  Error MAX  3D   :  193.8 cm
+  Error P95  3D   :   88.0 cm
+  Duración eval.  : 104.7 s
+
+────────────────────────────────────────────────────────────
+  Error de Formación (vs. offset deseado LINE ±0.80m)
+────────────────────────────────────────────────────────────
+  tello_soni2:
+    Error RMS formación XY :   52.6 cm
+    Error RMS formación 3D :   56.2 cm
+    Error MAX formación 3D : 1098.1 cm
+    Tiempo convergencia    : 26.0 s
+  tello_soni3:
+    Error RMS formación XY :   45.1 cm
+    Error RMS formación 3D :   47.6 cm
+    Error MAX formación 3D :  158.2 cm
+    Tiempo convergencia    : 19.6 s
+
+────────────────────────────────────────────────────────────
+  Calidad de Detección ArUco (/tello_soni1)
+────────────────────────────────────────────────────────────
+  Frecuencia del tópico        : 15.0 Hz
+  Streaks de detección         : 1 episodios
+  Duración media streak        : 50.47 s
+  Duración máx streak          : 50.47 s
+  Streaks < 0.5s (parpadeos)   : 0 (0.0 %)
+  Distancia media al marcador  : 1.21 m
+  Desv. estándar distancia     : 12.2 cm
+  Variación media frame-frame  : 0.8 cm/frame
+  (variación baja = detector estable)
+  Intervalo medio publicación  : 66.7 ms
+  (≈ latencia detección + publicación)
+
+============================================================
