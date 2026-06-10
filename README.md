@@ -1,272 +1,359 @@
-# TE3002B_uavSwarm
+# TE3002B — UAV Swarm Control with ArUco Tracking
 
-## Calibración de Cámara y Detección ArUco — DJI Tello
+**Course:** TE3002B — Implementación de Robótica Inteligente  
+**Institution:** ITESM Campus Monterrey  
+**Professor:** Dr. Herman Castañeda Cuevas
 
-Proyecto final para calibrar la cámara del dron **DJI Tello**, detectar marcadores **ArUco** y controlar el vuelo de forma autónoma para seguir un marcador en tiempo real.
-
-## Descripción
-
-El proyecto cubre dos fases principales:
-
-1. **Calibración y utilidades** — captura de frames, calibración intrínseca y generación de patrones.
-2. **Sistema de control autónomo** — seguimiento en tiempo real de un marcador ArUco con visualización HUD y gráfica 3D.
+| Name | ID |
+|---|---|
+| David Gilberto Lomelí Leal | A01571193 |
+| Abraham de Jesús Maldonado Mata | A00838581 |
+| David Alejandro Soni Cuevas | A01571777 |
 
 ---
 
-## Estructura del proyecto
+## Overview
+
+This repository contains two integrated components:
+
+1. **Camera calibration + standalone ArUco detection** — calibrate a DJI Tello camera and test single-drone ArUco tracking without ROS2.
+2. **ROS2 swarm control** (`ros2_ws/src/tello_vicon`) — three Tello drones flying in formation, with Vicon motion capture for state estimation, a Kalman filter for smoothing, a PD position controller, and ArUco-based leader tracking.
 
 ```
-FinalProyect/
-│
-├── main/
-│   └── files/
-│       ├── main.py             # Punto de entrada — lanza TelloController
-│       ├── tello_controller.py # Orquesta conexión, stream, hilos y display loop
-│       ├── detector.py         # Detección ArUco + estimación de pose (solvePnP)
-│       ├── controller.py       # Control RC proporcional (fb, yaw, up/down)
-│       ├── hud.py              # Overlay OpenCV + gráfica 3D matplotlib
-│       └── stream.py           # Buffer UDP — conserva solo el frame más reciente
-│
-├── captureframes.py            # Captura frames desde el Tello (guarda en calib_frames/)
-├── checkerboard.py             # Genera la imagen del tablero de ajedrez (10×7 cuadros)
-├── arucos/
-│   ├── arucocreation.py        # Genera un marcador ArUco (DICT_4X4_50)
-│   ├── calibracion.py          # Calibra la cámara con los frames capturados
-│   └── detect_aruco.py         # Detección ArUco básica (standalone)
-│
-├── checkerboard_9x6.png        # Tablero generado (listo para imprimir)
-├── arucos/aruco_id0.png        # Marcador ArUco ID=0 generado (300×300 px)
-├── arucos/aruco_id1.png        # Marcador ArUco ID=1 generado (300×300 px)
-│
-├── camera_params.npz           # Parámetros de calibración (cámara principal)
-├── camera_paramsSoni.npz       # Parámetros de calibración (cámara Soni)
-│
-├── calib_frames/               # Frames capturados para calibración (43 imágenes)
-└── calib_framesSoni/           # Frames alternativos — cámara Soni (34 imágenes)
+Leader drone detects ArUco marker → follows it at standoff distance
+Follower drones maintain geometric formation relative to leader (Vicon)
 ```
 
 ---
 
-## Requisitos
+## Repository Structure
 
 ```
-Python >= 3.8
-opencv-contrib-python
-djitellopy
-numpy
-matplotlib
+TE3002B_uavSwarm/
+│
+├── arucos/                        # ArUco utilities
+│   ├── arucocreation.py           # Generate ArUco markers (DICT_4X4_50)
+│   ├── calibracion.py             # Camera calibration from checkerboard frames
+│   ├── detect_aruco.py            # Standalone ArUco detection (no ROS2)
+│   └── test_aruco/                # Test images
+│
+├── calib_frames/                  # Checkerboard frames for calibration (43 images)
+├── calibration/                   # Calibration output files
+│
+├── python_scripts/                # Standalone utilities
+│   ├── battery_status.py          # Check Tello battery over WiFi
+│   ├── find_tellos.py             # Scan network for Tello IPs
+│   ├── square_motion.py           # Simple square flight test
+│   ├── tello_router.py            # Multi-drone WiFi router helper
+│   ├── metrics.py                 # Extract flight metrics from ROS2 bags
+│   ├── metrics_report.txt         # Last generated metrics report
+│   └── metrics_plots.png          # Last generated metrics plots
+│
+├── ros2_ws/                       # ROS2 workspace
+│   └── src/
+│       └── tello_vicon/           # Main ROS2 package (see below)
+│
+├── checkerboard.py                # Generate checkerboard pattern for calibration
+├── captureframes.py               # Capture calibration frames from Tello camera
+├── checkerboard_9x6.png           # Generated checkerboard (ready to print)
+├── requirements.txt               # Python dependencies
+├── .gitmodules
+└── README.md
 ```
 
-Instalar dependencias:
+---
+
+## Requirements
 
 ```bash
+pip install -r requirements.txt
+# or manually:
 pip install opencv-contrib-python djitellopy numpy matplotlib
 ```
 
-> **Nota:** se necesita `opencv-contrib-python` (no `opencv-python`) para tener soporte de ArUco.
+> **Important:** use `opencv-contrib-python`, not `opencv-python` — the `contrib` build includes ArUco support.
 
----
-
-## Sistema de control autónomo (`main/`)
-
-### Arquitectura
-
-El sistema corre tres hilos concurrentes más el display loop en el hilo principal:
-
-```
-Hilo principal  →  display loop (OpenCV imshow + matplotlib refresh)
-Hilo 1          →  ArucoDetector.run()   — detección + solvePnP
-Hilo 2          →  RCController.run()    — cálculo y envío de comandos RC
-```
-
-Un `threading.Lock` compartido protege el resultado de detección entre los hilos.
-
-### Módulos
-
-#### `main.py`
-Punto de entrada. Instancia `TelloController` y llama a `ctrl.run()`.
-
-```python
-from tello_controller import TelloController
-
-if __name__ == "__main__":
-    ctrl = TelloController()
-    ctrl.run()
+For the ROS2 package:
+```bash
+sudo apt install ros-humble-desktop
+pip3 install djitellopy
 ```
 
 ---
 
-#### `tello_controller.py` — `TelloController`
+## Part 1 — Camera Calibration
 
-Orquesta todo el ciclo de vida:
-
-| Método | Descripción |
-|--------|-------------|
-| `_connect()` | Conecta al Tello por Wi-Fi, activa el stream y reporta la batería |
-| `_open_stream()` | Abre el stream UDP (`udp://@0.0.0.0:11111`), espera hasta 15 s a que estabilice |
-| `run()` | Despega, lanza los hilos de detección y control, entra al display loop |
-| `_display()` | Bucle principal: lee frame, llama al HUD, muestra ventana OpenCV, `q` para salir |
-
-Al salir (`q`): detiene hilos, envía RC cero, aterriza, libera recursos.
-
----
-
-#### `detector.py` — `ArucoDetector`
-
-Detecta el marcador **ArUco ID=1** (diccionario `DICT_4X4_50`) y estima su pose 3D.
-
-| Constante | Valor | Descripción |
-|-----------|-------|-------------|
-| `MARKER_SIZE` | `0.208` m | Lado real del marcador impreso |
-| `DETECT_SCALE` | `0.5` | Escala de reducción del frame antes de detectar (más rápido) |
-
-Flujo por frame:
-1. Reduce el frame a la mitad para acelerar la detección.
-2. Convierte a escala de grises y ejecuta `ArucoDetector.detectMarkers()`.
-3. Si encuentra ID=1, escala las esquinas de vuelta a resolución original y llama a `cv2.solvePnP` (flag `SOLVEPNP_IPPE_SQUARE`).
-4. Escribe en el lock compartido: `(corners, rvec, tvec, dist, cx, cy)`.
-
----
-
-#### `controller.py` — `RCController`
-
-Control proporcional que envía comandos RC al Tello cada 50 ms.
-
-| Constante | Valor | Descripción |
-|-----------|-------|-------------|
-| `TARGET_DIST` | `1.2` m | Distancia objetivo al marcador |
-| `DEAD_ZONE_D` | `0.08` m | Zona muerta en distancia |
-| `Kp_dist` | `60` | Ganancia proporcional adelante/atrás |
-| `MAX_VEL_FB` | `30` | Velocidad máxima adelante/atrás (%) |
-| `DEAD_ZONE_PX` | `60` px | Zona muerta en píxeles para yaw y up/down |
-| `MAX_VEL_YAW` | `60` | Velocidad máxima de rotación (%) |
-| `MAX_VEL_UD` | `60` | Velocidad máxima arriba/abajo (%) |
-| `LOST_TIMEOUT` | `0.5` s | Tiempo sin detección antes de detener el dron |
-
-Canales RC:
-- **Lateral (left/right):** siempre 0 (no usado).
-- **Adelante/atrás:** proporcional al error `dist − TARGET_DIST`.
-- **Arriba/abajo:** proporcional al error vertical en píxeles (`cy − CENTER_Y`).
-- **Yaw:** proporcional al error horizontal en píxeles (`cx − CENTER_X`).
-
----
-
-#### `hud.py` — `HUD` y `Plot3D`
-
-**`HUD.draw(frame, res, lost)`** superpone sobre el frame de cámara:
-- Contornos del marcador detectado (`drawDetectedMarkers`) y ejes 3D (`drawFrameAxes`).
-- Cruz de crosshair y línea del centro al marcador.
-- Distancia actual y estado (`OK` / `AVANZA` / `RETROCEDE`).
-- Errores de píxel en X e Y.
-- Coordenadas 3D del marcador en metros.
-- Barra horizontal de error de distancia.
-
-**`Plot3D`** abre una ventana matplotlib 3D (backend `TkAgg`) que muestra:
-- El origen marcado como el ArUco.
-- La posición actual del dron en rojo.
-- Estela de las últimas `MAX_TRAIL = 80` posiciones.
-- Línea punteada dron → ArUco.
-
-Conversión de ejes de cámara a ejes intuitivos de la gráfica:
-
-| Eje gráfica | Origen |
-|-------------|--------|
-| X (izq/der) | `tvec[0]` |
-| Y (dist)    | `tvec[2]` |
-| Z (arr/abj) | `-tvec[1]` |
-
----
-
-#### `stream.py` — `LatestFrame`
-
-Buffer de un solo frame que drena continuamente el buffer UDP del VideoCapture de OpenCV y conserva únicamente el frame más reciente, evitando acumulación de latencia.
-
-```python
-grabber = LatestFrame(cap)
-frame   = grabber.frame   # propiedad thread-safe
-```
-
----
-
-### Ejecución del sistema principal
-
-Desde la carpeta `main/files/`:
+### Step 0 — Generate patterns (once)
 
 ```bash
-cd main/files
-python main.py
-```
-
-| Tecla | Acción |
-|-------|--------|
-| `q`   | Aterrizar y salir |
-
-> El marcador objetivo es **ArUco ID=1** (diccionario `DICT_4X4_50`). Asegúrate de que `aruco_id1.png` esté impreso con un lado real de **20.8 cm**.
-
----
-
-## Flujo de calibración (fase previa)
-
-### 0. Generar los patrones (solo una vez)
-
-```bash
-# Genera checkerboard_9x6.png (10×7 cuadros, 80 px/cuadro)
+# Checkerboard for calibration (10×7 squares, 80 px/square)
 python checkerboard.py
 
-# Genera marcadores ArUco
+# ArUco markers (DICT_4X4_50, ID 0 and 1)
 python arucos/arucocreation.py
 ```
 
-Imprime `checkerboard_9x6.png` y mide el lado real de cada cuadro en metros — ese valor va en `SQUARE_SIZE` dentro de `arucos/calibracion.py`.
+Print `checkerboard_9x6.png` and measure the real side of each square in metres — set that value as `SQUARE_SIZE` in `arucos/calibracion.py`.
 
-### 1. Capturar frames de calibración
+### Step 1 — Capture frames
 
 ```bash
 python captureframes.py
 ```
 
-| Tecla | Acción |
-|-------|--------|
-| `s`   | Guardar frame actual en `calib_frames/` |
-| `q`   | Salir |
+| Key | Action |
+|---|---|
+| `s` | Save current frame to `calib_frames/` |
+| `q` | Quit |
 
-Captura **al menos 20–30 frames** variando inclinación, rotación y distancia del tablero.
+Capture **at least 20–30 frames** varying tilt, rotation, and distance. The drone must be connected to its own WiFi AP.
 
-### 2. Calibrar la cámara
+### Step 2 — Calibrate
 
 ```bash
 python arucos/calibracion.py
 ```
 
-Procesa todas las imágenes en `calib_frames/`, muestra las detecciones y guarda el resultado en `camera_params.npz`.
+Processes all frames in `calib_frames/`, shows detected corners, and saves `camera_params.npz`.
 
-- RMS error < 1.0 px → calibración válida.
+- RMS reprojection error < 1.0 px → valid calibration.
 
----
+### Calibration output
 
-## Parámetros de calibración
-
-Los archivos `.npz` contienen:
-
-| Variable | Descripción |
-|----------|-------------|
-| `K`      | Matriz intrínseca de la cámara (3×3) |
-| `dist`   | Coeficientes de distorsión (k1, k2, p1, p2, k3) |
-
-Carga en tu código con:
+| Variable | Description |
+|---|---|
+| `K` | 3×3 intrinsic camera matrix |
+| `dist` | Distortion coefficients (k1, k2, p1, p2, k3) |
 
 ```python
 import numpy as np
-data = np.load("camera_params.npz")
+data = np.load("calibration/camera_params.npz")
 K, dist = data["K"], data["dist"]
 ```
 
 ---
 
-## Configuración del tablero
+## Part 2 — Standalone ArUco Tracking (no ROS2)
 
-| Parámetro | Valor por defecto |
-|-----------|-------------------|
-| Esquinas internas | 9 × 6 |
-| Tamaño de cuadro | 0.025 m (ajustar según impresión) |
-| Patrón generado | 10 × 7 cuadros, 80 px/cuadro |
+Located in the root and `arucos/`. Connects directly to one Tello drone via WiFi — no Vicon, no ROS2 required.
+
+### Run
+
+```bash
+python arucos/detect_aruco.py
+```
+
+Tracks **ArUco ID=1** (DICT_4X4_50). The marker must be printed with a real side length of **20.8 cm**.
+
+| Key | Action |
+|---|---|
+| `q` | Land and exit |
+
+### Architecture
+
+Three concurrent threads + display loop on the main thread:
+
+```
+Main thread  →  display loop (OpenCV imshow)
+Thread 1     →  ArucoDetector  — detection + solvePnP
+Thread 2     →  RCController   — proportional RC commands every 50 ms
+```
+
+### Control parameters
+
+| Parameter | Value | Description |
+|---|---|---|
+| `TARGET_DIST` | 1.2 m | Desired distance to marker |
+| `DEAD_ZONE_D` | 0.08 m | Distance dead zone |
+| `Kp_dist` | 60 | Forward/back proportional gain |
+| `MAX_VEL_FB` | 30 % | Max forward/back speed |
+| `DEAD_ZONE_PX` | 60 px | Pixel dead zone for yaw/up-down |
+| `LOST_TIMEOUT` | 0.5 s | Hover if marker not seen for this long |
+
+RC channels: lateral is always 0. Forward/back proportional to distance error. Up/down and yaw proportional to pixel error from frame center.
+
+---
+
+## Part 3 — ROS2 Swarm Control (`ros2_ws/src/tello_vicon`)
+
+### Package structure
+
+```
+tello_vicon/
+├── scripts/
+│   ├── vicon_kf_node.py           # Kalman filter — all drones in one process
+│   ├── tello_controller_node.py   # PD position controller — all drones in one process
+│   ├── swarm_bridge_node.py       # djitellopy bridge — one UDP socket for all drones
+│   ├── formation_controller_node.py  # formation geometry + ArUco reference
+│   ├── aruco_node.py              # ArUco detection + world-frame transform + HUD
+│   ├── video_recorder_node.py     # compressed video recording
+│   ├── kalman_filter.py           # discrete Kalman filter (12-state)
+│   └── vicon_viz_node.py          # Foxglove / RViz visualization
+├── launch/
+│   ├── swarm.launch.py            # main launch — full 3-drone swarm
+│   ├── single_drone.launch.py     # single drone testing
+│   ├── kf_only.launch.py          # KF only (bag replay)
+│   ├── record_bag.launch.py       # record all topics
+│   └── viz.launch.py              # Foxglove + RViz
+└── config/
+    ├── params.yaml                # all tunable parameters
+    ├── camera_params.npz          # Tello camera calibration
+    └── foxglove_layouts/          # Foxglove Studio panel layouts
+```
+
+### Hardware
+
+| Component | Details |
+|---|---|
+| Drones | DJI Tello × 3 |
+| Motion capture | Vicon Tracker |
+| Subjects | `tello_soni1`, `tello_soni2`, `tello_soni3` |
+| IPs | soni1: `192.168.0.100`, soni2: `192.168.0.101`, soni3: `192.168.0.102` |
+| ArUco marker | ID=1, DICT_4X4_50, 20.8 cm side |
+
+The Vicon driver publishes `/vicon/tello_soniN/tello_soniN` — the launch file remaps this automatically to `/vicon/tello_soniN/pose`.
+
+### Build
+
+```bash
+cd ~/ros2_ws
+colcon build --packages-select tello_vicon
+source install/setup.bash
+```
+
+### Launch
+
+```bash
+# Full swarm (uses default IPs from params.yaml)
+ros2 launch tello_vicon swarm.launch.py
+
+# Custom IPs or formation
+ros2 launch tello_vicon swarm.launch.py \
+  drones:="tello_soni1:192.168.0.100:tello_soni2:192.168.0.101:tello_soni3:192.168.0.102" \
+  formation:=V
+
+# Mock mode — no real drones (for bag replay)
+ros2 launch tello_vicon swarm.launch.py mock:=true
+ros2 bag play <bag_path>   # in another terminal
+```
+
+### Launch arguments
+
+| Argument | Default | Description |
+|---|---|---|
+| `drones` | `tello_soni1:192.168.0.100:...` | Colon-separated `subject:ip` pairs. First = leader. |
+| `mock` | `false` | Skip real drones |
+| `formation` | `LINE` | `V` \| `LINE` \| `COLUMN` \| `PANORAMIC` \| `RECONSTRUCTION` |
+| `record_mode` | `leader` | Video: `leader` \| `all` |
+| `output_dir` | `/home/kfcnef/videos` | Video output directory |
+
+### Formations
+
+| Name | S1 offset | S2 offset |
+|---|---|---|
+| `LINE` | (0, +1.5, 0) m | (0, −1.5, 0) m |
+| `V` | (−1.0, +1.0, 0) m | (−1.0, −1.0, 0) m |
+| `COLUMN` | (−1.2, 0, +0.4) m | (−2.4, 0, +0.8) m |
+| `PANORAMIC` | (0, +1.5, 0) yaw+45° | (0, −1.5, 0) yaw−45° |
+| `RECONSTRUCTION` | (−0.8, +1.2, +0.4) m | (−0.8, −1.2, +0.4) m |
+
+Change at runtime:
+```bash
+ros2 param set /formation_controller formation V
+```
+
+### Key topics
+
+| Topic | Type | Description |
+|---|---|---|
+| `/tello_soniN/kf_state` | `Float64MultiArray` | KF state [px,vx,py,vy,pz,vz,roll,vroll,pitch,vpitch,yaw,vyaw] |
+| `/tello_soniN/reference` | `PoseStamped` | Position setpoint |
+| `/tello_soniN/rc_cmd` | `Int32MultiArray` | RC command [lr, fb, ud, yaw] |
+| `/tello_soniN/image_raw/compressed` | `CompressedImage` | JPEG video (leader only) |
+| `/aruco/pose` | `PoseStamped` | Marker pose in Vicon world frame |
+| `/tello_soni1/aruco_detected` | `Bool` | True while marker visible |
+| `/tello_soni1/aruco_distance` | `Float32` | Distance to marker [m] |
+
+### ArUco behavior
+
+```
+ArUco visible   →  leader follows marker at standoff distance (default 1.0 m)
+ArUco lost      →  leader hovers freely after 0.5 s timeout
+ArUco reappears →  leader resumes tracking immediately
+Followers       →  always track formation offset from leader Vicon position
+```
+
+### Video recording
+
+```bash
+# Switch to recording all drones at runtime
+ros2 service call /video/set_mode std_srvs/srv/SetBool "data: true"
+
+# Switch back to leader only
+ros2 service call /video/set_mode std_srvs/srv/SetBool "data: false"
+```
+
+Videos saved as `<ns>_YYYYMMDD_HHMMSS.mp4` in `output_dir`.
+
+### Visualization
+
+```bash
+# Foxglove Studio
+ros2 run foxglove_bridge foxglove_bridge
+# Open config/foxglove_layouts/swarm.json → connect ws://localhost:8765
+
+# RViz
+ros2 launch tello_vicon viz.launch.py
+```
+
+---
+
+## Flight Metrics
+
+Extract position and formation error from a recorded bag:
+
+```bash
+source /opt/ros/humble/setup.bash
+
+python3 python_scripts/metrics.py ~/ros2_ws/bags/flight_01 \
+  --trim-start 5 \
+  --trim-end 3 \
+  --formation LINE
+```
+
+Outputs `metrics_report.txt` and `metrics_plots.png` with:
+- RMS, max, P95 position error per drone
+- Formation convergence time and error
+- ArUco detection stability (streak analysis)
+- Distance consistency when marker is visible
+
+---
+
+## Utility Scripts (`python_scripts/`)
+
+| Script | Description |
+|---|---|
+| `find_tellos.py` | Scan local network and print IPs of all connected Tellos |
+| `battery_status.py` | Print battery % for each drone |
+| `square_motion.py` | Fly a square pattern — quick sanity check after setup |
+| `tello_router.py` | Helper to connect multiple Tellos through a WiFi router |
+
+---
+
+## Common Issues
+
+| Symptom | Fix |
+|---|---|
+| `Address already in use` (port 8889) | Use `swarm_bridge` — one process owns the UDP socket |
+| `Waiting for leader kf_state` | Check Vicon remap in `swarm.launch.py` |
+| Followers fly to wrong position | Verify `leader_ns/s1_ns/s2_ns` passed to `formation_controller` in launch |
+| Video publish latency ~170ms | Already fixed — uses CompressedImage (JPEG, ~11KB vs 2MB raw) |
+| High CPU on vicon_kf (>50%) | Use merged node with `drone_subjects` param (one process for all KFs) |
+| Leader keeps moving after ArUco lost | Set `timeout_s: 0.5` in `params.yaml` tello_controller section |
+| `opencv-python` has no ArUco | Install `opencv-contrib-python` instead |
+
+---
+
+## License
+
+Apache-2.0
